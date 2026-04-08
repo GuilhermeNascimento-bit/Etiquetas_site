@@ -1,10 +1,17 @@
 import os, re, json, datetime, tempfile, base64
+import pypdf
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 from reportlab.lib import colors
 
+# No topo do app.py, logo após os imports:
+CORES = [
+    'ROXO TRENDY', 'CROMO REFLETIVO', 'NAUTICO', 'BRANCO', 'DESEJO',
+    'PRETO', 'SIDERAL', 'PINK', 'MARFIM', 'VIOLETA', 'RUBI',
+    'BANDANA', 'LIQUOR', 'ORVALHO', 'ROSEWOOD',
+]
 app = Flask(__name__)
 CORS(app)
 
@@ -185,82 +192,56 @@ def importar_xlsx():
 
 @app.route('/ler_nf', methods=['POST'])
 def ler_nf():
-    """Usa Claude AI para extrair produtos de qualquer NF em PDF"""
     try:
-        import anthropic
         f = request.files.get('arquivo')
-        if not f: return jsonify({'erro': 'Nenhum arquivo enviado'}), 400
+        if not f: 
+            return jsonify({'erro': 'Nenhum arquivo enviado'}), 400
 
-        # Lê o PDF como base64
-        pdf_bytes = f.read()
-        pdf_b64 = base64.standard_b64encode(pdf_bytes).decode('utf-8')
+        # 1. Extração Gratuita de Texto
+        reader = pypdf.PdfReader(f)
+        texto_completo = ""
+        for page in reader.pages:
+            texto_completo += page.extract_text() + "\n"
 
-        client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
-
-        prompt = """Analise esta nota fiscal / romaneio e extraia TODOS os produtos listados.
-
-Para cada produto, retorne um JSON array com objetos no formato:
-{
-  "nome": "nome do produto",
-  "cor": "cor (ou vazio se não houver)",
-  "tam": "tamanho como G, M, P, GG (ou vazio se não houver)",
-  "preco": "preço sugerido de venda no formato 00,00 (use o maior preço da linha, geralmente 'preço sugerido' ou 'valor varejo')",
-  "qtde": quantidade como número inteiro
-}
-
-IMPORTANTE:
-- Retorne APENAS o JSON array, sem texto adicional, sem markdown, sem explicações
-- Use o preço SUGERIDO DE VENDA (não o preço de custo/atacado)
-- Se houver cor e tamanho juntos na mesma linha, separe em campos diferentes
-- A quantidade deve ser um número inteiro
-- Se não encontrar preço sugerido, use o maior valor da linha"""
-
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4000,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": pdf_b64
-                        }
-                    },
-                    {"type": "text", "text": prompt}
-                ]
-            }]
-        )
-
-        texto = response.content[0].text.strip()
-        # Limpa markdown se houver
-        texto = re.sub(r'```json|```', '', texto).strip()
-        produtos = json.loads(texto)
-
-        # Normaliza
+        # 2. Lógica de Parse (Extraída do seu código 'gerar_etiquetas.py')
         resultado = []
-        for p in produtos:
-            if not p.get('nome'): continue
-            preco = str(p.get('preco', '0')).replace('.', ',')
-            if ',' not in preco:
-                preco = preco + ',00'
-            resultado.append({
-                'nome': str(p.get('nome', '')).strip(),
-                'cor':  str(p.get('cor', '')).strip(),
-                'tam':  str(p.get('tam', '')).strip(),
-                'preco': preco,
-                'qtde': int(p.get('qtde', 1))
-            })
+        for linha in texto_completo.split('\n'):
+            linha = linha.strip()
+            # Filtra apenas linhas que começam com o código de 5 dígitos (padrão da sua NF)
+            if re.match(r'^\d{5}', linha):
+                # Preço sugerido
+                vals = re.findall(r'\d+,\d{2}', linha)
+                preco_sug = vals[-1] if vals else '0,00'
 
+                # Tamanho (G, M, P, GG)
+                tam_m = re.search(r'\b(GG|G|M|P)\b\s+\d+\s+\d+,\d{2}', linha)
+                tam = tam_m.group(1) if tam_m else ''
+
+                # Cor (Busca na sua lista de CORES definida no topo)
+                cor = ''
+                for c in CORES:
+                    if c in linha.upper():
+                        cor = c
+                        break
+                
+                # Quantidade
+                qtde_m = re.search(r'\b(?:GG|G|M|P)\b\s+(\d+)\s+\d+,\d{2}', linha)
+                qtde = int(qtde_m.group(1)) if qtde_m else 1
+
+                # Nome do Produto (Extrai entre o código e a cor/tamanho)
+                m = re.match(r'^\d{5}\s+\S+\s+\S+\s+\S+[-\s]+(.+)', linha)
+                nome = m.group(1).split(tam)[0].strip() if m else "Produto"
+
+                resultado.append({
+                    'nome': nome.upper(),
+                    'cor': cor,
+                    'tam': tam,
+                    'preco': preco_sug,
+                    'qtde': qtde
+                })
+
+        # 3. Retorno IDÊNTICO ao que o seu Front-end já espera
         return jsonify({'produtos': resultado, 'total': len(resultado)})
 
-    except json.JSONDecodeError as e:
-        return jsonify({'erro': f'Erro ao interpretar resposta da IA: {str(e)}', 'raw': texto}), 500
     except Exception as e:
-        return jsonify({'erro': str(e)}), 500
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5050))
-    app.run(host='0.0.0.0', port=port)
+        return jsonify({'erro': f"Erro no processamento local: {str(e)}"}), 500
