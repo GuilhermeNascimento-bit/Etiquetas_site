@@ -51,7 +51,12 @@ def desenhar_etiqueta(c, p, tipo, cfg):
     H = cfg['altura_mm'] * mm
     MARGEM  = 1.5 * mm
     AREA_W  = W - 2*MARGEM
-    escala  = cfg['altura_mm'] / 29.0          # mantém proporções do design original
+    # escala tipográfica: cresce com a altura, mas com limites pra não gerar
+    # texto absurdo em etiquetas muito pequenas/grandes.
+    escala  = max(0.6, min(2.2, cfg['altura_mm'] / 29.0))
+    # espaçamentos entre blocos crescem mais devagar que a fonte — evita o
+    # "vão" enorme no meio da etiqueta quando a altura é bem maior que 29mm.
+    gap_escala = 1 + (escala - 1) * 0.4
     FAIXA_H = H * (8.5/29.0)
     cor_faixa       = colors.HexColor(cfg.get('cor_faixa') or '#000000')
     cor_texto_faixa = colors.HexColor(cfg.get('cor_texto_faixa') or '#FFFFFF')
@@ -88,12 +93,7 @@ def desenhar_etiqueta(c, p, tipo, cfg):
             c.setFont("Helvetica", 5.5*escala)
             c.drawRightString(W - MARGEM, H - FAIXA_H + 2.8*mm*escala, info_faixa)
 
-    nome_lines = wrap_text(c, p['nome'].upper(), "Helvetica-Bold", 6.5*escala, AREA_W)
-    c.setFillColor(colors.black)
-    y_nome = H - FAIXA_H - 4.5*mm*escala
-    for i, line in enumerate(nome_lines[:2]):
-        c.setFont("Helvetica-Bold", 6.5*escala)
-        c.drawString(MARGEM, y_nome - i*3.8*mm*escala, line)
+    nome_lines = wrap_text(c, p['nome'].upper(), "Helvetica-Bold", 6.5*escala, AREA_W)[:2]
 
     detalhes = []
     if tipo == 'roupa':
@@ -102,29 +102,68 @@ def desenhar_etiqueta(c, p, tipo, cfg):
     else:
         if p.get('fabricacao'): detalhes.append(f"Fab: {p['fabricacao']}")
         if p.get('lote'): detalhes.append(f"Lote: {p['lote']}")
+
+    if tipo == 'roupa':
+        preco = p.get('preco', '')
+        valor_txt = f"R$ {preco}" if not str(preco).startswith("R$") else str(preco)
+        rotulo = "PRECO SUGERIDO"
+    else:
+        valor_txt = f"VAL: {p.get('validade','')}"
+        rotulo = "DATA DE VALIDADE"
+
+    # Bloco de conteúdo (nome + detalhes + linha + valor) é montado com
+    # distâncias fixas entre si e depois centralizado verticalmente no
+    # espaço abaixo da faixa — assim etiquetas mais altas ganham margem
+    # extra em cima/embaixo do bloco, em vez de um vão solto no meio.
+    S1, LINE_NOME, S3, S4, S5, S6 = (4.5*mm, 3.8*mm, 3.8*mm, 5.0*mm, 4.4*mm, 2.8*mm)
+    extra_linhas = max(0, len(nome_lines) - 1)
+    linhas_h = LINE_NOME*escala*extra_linhas       # altura do nome (fixa, nunca encolhe)
+    gaps_base = S1 + S3 + S4 + S5 + S6
+    gaps_h = gaps_base * gap_escala
+    disponivel = H - FAIXA_H
+    # Se mesmo os espaçamentos "encolhidos" não couberem (nome com 2 linhas
+    # numa etiqueta baixa), reduz só os espaçamentos até caber — nunca deixa
+    # a linha/valor vazarem pra fora ou colidirem com o texto.
+    if gaps_h > 0 and (linhas_h + gaps_h) > disponivel:
+        gap_escala *= max(0, disponivel - linhas_h) / gaps_h
+        gaps_h = gaps_base * gap_escala
+    content_h = linhas_h + gaps_h
+    top_pad = max(0, (disponivel - content_h) / 2)
+
+    cursor = H - FAIXA_H - top_pad
+    cursor -= S1*gap_escala
+    c.setFillColor(colors.black)
+    c.setFont("Helvetica-Bold", 6.5*escala)
+    c.drawString(MARGEM, cursor, nome_lines[0] if nome_lines else '')
+    if len(nome_lines) > 1:
+        cursor -= LINE_NOME*escala
+        c.drawString(MARGEM, cursor, nome_lines[1])
+    cursor -= S3*gap_escala
     if detalhes:
         c.setFont("Helvetica", 6*escala)
         c.setFillColor(colors.HexColor('#444444'))
-        y_det = H - FAIXA_H - (4.5 + min(len(nome_lines),2)*3.8)*mm*escala
-        c.drawString(MARGEM, y_det, "   |   ".join(detalhes))
-
+        c.drawString(MARGEM, cursor, "   |   ".join(detalhes))
+    cursor -= S4*gap_escala
+    y_linha = cursor
     c.setStrokeColor(colors.HexColor('#CCCCCC'))
     c.setLineWidth(0.4)
-    c.line(MARGEM, 7.2*mm*escala, W-MARGEM, 7.2*mm*escala)
+    c.line(MARGEM, y_linha, W-MARGEM, y_linha)
+    cursor -= S5*gap_escala
+
+    rotulo_font = 5*escala
+    rotulo_w = c.stringWidth(rotulo, "Helvetica", rotulo_font)
+    valor_font = 12*escala
+    valor_w = c.stringWidth(valor_txt, "Helvetica-Bold", valor_font)
+    espaco_livre = AREA_W - rotulo_w - 2*mm
+    if espaco_livre > 0 and valor_w > espaco_livre:
+        valor_font = max(6, valor_font * (espaco_livre/valor_w))
 
     c.setFillColor(colors.black)
-    c.setFont("Helvetica-Bold", 12*escala)
-    if tipo == 'roupa':
-        preco = p.get('preco', '')
-        preco_fmt = f"R$ {preco}" if not str(preco).startswith("R$") else str(preco)
-        c.drawString(MARGEM, 2.8*mm*escala, preco_fmt)
-        rotulo = "PRECO SUGERIDO"
-    else:
-        c.drawString(MARGEM, 2.8*mm*escala, f"VAL: {p.get('validade','')}")
-        rotulo = "DATA DE VALIDADE"
-    c.setFont("Helvetica", 5*escala)
+    c.setFont("Helvetica-Bold", valor_font)
+    c.drawString(MARGEM, cursor, valor_txt)
+    c.setFont("Helvetica", rotulo_font)
     c.setFillColor(colors.HexColor('#888888'))
-    c.drawRightString(W-MARGEM, 2.8*mm*escala, rotulo)
+    c.drawRightString(W-MARGEM, cursor, rotulo)
     c.showPage()
 
 def gerar_pdf_arquivo(produtos, tipo='roupa', cfg=None):

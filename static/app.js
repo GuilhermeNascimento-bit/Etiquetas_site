@@ -225,7 +225,8 @@
 
     const MARGEM = 1.5;
     const AREA_W = Wmm - 2 * MARGEM;
-    const escala = Hmm / 29;
+    const escala = Math.max(0.6, Math.min(2.2, Hmm / 29));
+    let gapEscala = 1 + (escala - 1) * 0.4;
     const FAIXA_H = Hmm * (8.5 / 29);
     const mmpx = (v) => v * PXPERMM;
     const ptpx = (pt) => pt * escala * 0.3528 * PXPERMM;
@@ -264,13 +265,7 @@
       }
     }
 
-    ctx.fillStyle = '#000000';
-    ctx.font = `bold ${ptpx(6.5)}px ${FONT}`;
-    const nomeLines = wrapTextCanvas(ctx, (produto.nome || '').toUpperCase(), mmpx(AREA_W));
-    const yNomeMm = FAIXA_H + 4.5 * escala;
-    nomeLines.slice(0, 2).forEach((line, i) => {
-      ctx.fillText(line, mmpx(MARGEM), mmpx(yNomeMm + i * 3.8 * escala));
-    });
+    const nomeLines = wrapTextCanvas(ctx, (produto.nome || '').toUpperCase(), mmpx(AREA_W)).slice(0, 2);
 
     const detalhes = [];
     if (tipo === 'roupa') {
@@ -280,38 +275,74 @@
       if (produto.fabricacao) detalhes.push('Fab: ' + formatDateBR(produto.fabricacao));
       if (produto.lote) detalhes.push('Lote: ' + produto.lote);
     }
+
+    let valorTxt, rotulo;
+    if (tipo === 'roupa') {
+      const preco = (produto.preco || '').toString();
+      valorTxt = preco.startsWith('R$') ? preco : `R$ ${preco}`;
+      rotulo = 'PRECO SUGERIDO';
+    } else {
+      valorTxt = `VAL: ${formatDateBR(produto.validade)}`;
+      rotulo = 'DATA DE VALIDADE';
+    }
+
+    // Bloco de conteúdo (nome + detalhes + linha + valor) centralizado no
+    // espaço abaixo da faixa — espelha exatamente a lógica do PDF (app.py).
+    const S1 = 4.5, LINE_NOME = 3.8, S3 = 3.8, S4 = 5.0, S5 = 4.4, S6 = 2.8;
+    const extraLinhas = Math.max(0, nomeLines.length - 1);
+    const linhasH = LINE_NOME * escala * extraLinhas;
+    const gapsBase = S1 + S3 + S4 + S5 + S6;
+    let gapsH = gapsBase * gapEscala;
+    const disponivel = Hmm - FAIXA_H;
+    if (gapsH > 0 && (linhasH + gapsH) > disponivel) {
+      gapEscala *= Math.max(0, disponivel - linhasH) / gapsH;
+      gapsH = gapsBase * gapEscala;
+    }
+    const contentH = linhasH + gapsH;
+    const topPad = Math.max(0, (disponivel - contentH) / 2);
+
+    let cursor = FAIXA_H + topPad;
+    cursor += S1 * gapEscala;
+    ctx.fillStyle = '#000000';
+    ctx.font = `bold ${ptpx(6.5)}px ${FONT}`;
+    ctx.fillText(nomeLines[0] || '', mmpx(MARGEM), mmpx(cursor));
+    if (nomeLines.length > 1) {
+      cursor += LINE_NOME * escala;
+      ctx.fillText(nomeLines[1], mmpx(MARGEM), mmpx(cursor));
+    }
+    cursor += S3 * gapEscala;
     if (detalhes.length) {
       ctx.font = `${ptpx(6)}px ${FONT}`;
       ctx.fillStyle = '#444444';
-      const yDetMm = FAIXA_H + (4.5 + Math.min(nomeLines.length, 2) * 3.8) * escala;
-      ctx.fillText(detalhes.join('   |   '), mmpx(MARGEM), mmpx(yDetMm));
+      ctx.fillText(detalhes.join('   |   '), mmpx(MARGEM), mmpx(cursor));
     }
-
+    cursor += S4 * gapEscala;
     ctx.strokeStyle = '#cccccc';
     ctx.lineWidth = Math.max(1, mmpx(0.4));
     ctx.beginPath();
-    const yLineMm = Hmm - 7.2 * escala;
-    ctx.moveTo(mmpx(MARGEM), mmpx(yLineMm));
-    ctx.lineTo(mmpx(Wmm - MARGEM), mmpx(yLineMm));
+    ctx.moveTo(mmpx(MARGEM), mmpx(cursor));
+    ctx.lineTo(mmpx(Wmm - MARGEM), mmpx(cursor));
     ctx.stroke();
+    cursor += S5 * gapEscala;
+
+    const rotuloFontPx = ptpx(5);
+    ctx.font = `${rotuloFontPx}px ${FONT}`;
+    const rotuloWpx = ctx.measureText(rotulo).width;
+    let valorFontPx = ptpx(12);
+    ctx.font = `bold ${valorFontPx}px ${FONT}`;
+    const valorWpx = ctx.measureText(valorTxt).width;
+    const espacoLivrePx = mmpx(AREA_W) - rotuloWpx - mmpx(2);
+    if (espacoLivrePx > 0 && valorWpx > espacoLivrePx) {
+      valorFontPx = Math.max(mmpx(2), valorFontPx * (espacoLivrePx / valorWpx));
+    }
 
     ctx.fillStyle = '#000000';
-    ctx.font = `bold ${ptpx(12)}px ${FONT}`;
-    const yBottomMm = Hmm - 2.8 * escala;
-    let rotulo;
-    if (tipo === 'roupa') {
-      const preco = (produto.preco || '').toString();
-      const precoFmt = preco.startsWith('R$') ? preco : `R$ ${preco}`;
-      ctx.fillText(precoFmt, mmpx(MARGEM), mmpx(yBottomMm));
-      rotulo = 'PRECO SUGERIDO';
-    } else {
-      ctx.fillText(`VAL: ${formatDateBR(produto.validade)}`, mmpx(MARGEM), mmpx(yBottomMm));
-      rotulo = 'DATA DE VALIDADE';
-    }
-    ctx.font = `${ptpx(5)}px ${FONT}`;
+    ctx.font = `bold ${valorFontPx}px ${FONT}`;
+    ctx.fillText(valorTxt, mmpx(MARGEM), mmpx(cursor));
+    ctx.font = `${rotuloFontPx}px ${FONT}`;
     ctx.fillStyle = '#888888';
     ctx.textAlign = 'right';
-    ctx.fillText(rotulo, mmpx(Wmm - MARGEM), mmpx(yBottomMm));
+    ctx.fillText(rotulo, mmpx(Wmm - MARGEM), mmpx(cursor));
     ctx.textAlign = 'left';
   }
 
