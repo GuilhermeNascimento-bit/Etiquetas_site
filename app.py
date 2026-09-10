@@ -1,10 +1,11 @@
-import os, re, json, datetime, tempfile, base64
+import os, re, json, datetime, tempfile, base64, io
 import pypdf
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, render_template
 from flask_cors import CORS
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 from reportlab.lib import colors
+from reportlab.lib.utils import ImageReader
 
 # No topo do app.py, logo após os imports:
 CORES = [
@@ -15,11 +16,16 @@ CORES = [
 app = Flask(__name__)
 CORS(app)
 
-W, H      = 90*mm, 29*mm
-MARGEM    = 1.5*mm
-AREA_W    = W - 2*MARGEM
-FAIXA_H   = 8.5*mm
-NOME_LOJA = "DILIONE FITNESS"
+# Configuração padrão da etiqueta — NÃO alterar sem querer mudar o
+# comportamento default (90x29mm, faixa preta, "DILIONE FITNESS").
+DEFAULT_CONFIG = {
+    'largura_mm': 90,
+    'altura_mm': 29,
+    'nome_loja': 'DILIONE FITNESS',
+    'cor_faixa': '#000000',
+    'cor_texto_faixa': '#FFFFFF',
+    'logo_base64': None,
+}
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 HIST_FILE = os.path.join(BASE_DIR, "historico.json")
 PDFS_DIR  = os.path.join(BASE_DIR, "pdfs_gerados")
@@ -40,52 +46,98 @@ def wrap_text(c, text, font, size, max_width):
     if current: lines.append(current)
     return lines
 
-def desenhar_etiqueta(c, nome, cor, tam, preco):
+def desenhar_etiqueta(c, p, tipo, cfg):
+    W = cfg['largura_mm'] * mm
+    H = cfg['altura_mm'] * mm
+    MARGEM  = 1.5 * mm
+    AREA_W  = W - 2*MARGEM
+    escala  = cfg['altura_mm'] / 29.0          # mantém proporções do design original
+    FAIXA_H = H * (8.5/29.0)
+    cor_faixa       = colors.HexColor(cfg.get('cor_faixa') or '#000000')
+    cor_texto_faixa = colors.HexColor(cfg.get('cor_texto_faixa') or '#FFFFFF')
+    nome_loja       = cfg.get('nome_loja') or 'DILIONE FITNESS'
+
     c.setFillColor(colors.white)
     c.rect(0, 0, W, H, fill=1, stroke=0)
-    c.setFillColor(colors.black)
+    c.setFillColor(cor_faixa)
     c.rect(0, H - FAIXA_H, W, FAIXA_H, fill=1, stroke=0)
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 7.5)
-    c.drawString(MARGEM, H - FAIXA_H + 2.8*mm, NOME_LOJA)
-    info_faixa = " | ".join(filter(None, [cor, tam]))
-    if info_faixa:
-        c.setFont("Helvetica", 5.5)
-        c.drawRightString(W - MARGEM, H - FAIXA_H + 2.8*mm, info_faixa)
-    nome_lines = wrap_text(c, nome.upper(), "Helvetica-Bold", 6.5, AREA_W)
+
+    text_x = MARGEM
+    logo_b64 = cfg.get('logo_base64')
+    if logo_b64:
+        try:
+            b64data = logo_b64.split(',', 1)[1] if ',' in logo_b64 else logo_b64
+            img = ImageReader(io.BytesIO(base64.b64decode(b64data)))
+            iw, ih = img.getSize()
+            logo_h = FAIXA_H - 2*(1.2*mm*escala)
+            logo_w = logo_h * (iw/ih)
+            logo_y = H - FAIXA_H + (FAIXA_H - logo_h)/2
+            c.drawImage(img, MARGEM, logo_y, width=logo_w, height=logo_h,
+                        mask='auto', preserveAspectRatio=True)
+            text_x = MARGEM + logo_w + 1.5*mm
+        except Exception:
+            pass
+
+    c.setFillColor(cor_texto_faixa)
+    c.setFont("Helvetica-Bold", 7.5*escala)
+    c.drawString(text_x, H - FAIXA_H + 2.8*mm*escala, nome_loja)
+
+    if tipo == 'roupa':
+        info_faixa = " | ".join(filter(None, [p.get('cor',''), p.get('tam','')]))
+        if info_faixa:
+            c.setFont("Helvetica", 5.5*escala)
+            c.drawRightString(W - MARGEM, H - FAIXA_H + 2.8*mm*escala, info_faixa)
+
+    nome_lines = wrap_text(c, p['nome'].upper(), "Helvetica-Bold", 6.5*escala, AREA_W)
     c.setFillColor(colors.black)
-    y_nome = H - FAIXA_H - 4.5*mm
+    y_nome = H - FAIXA_H - 4.5*mm*escala
     for i, line in enumerate(nome_lines[:2]):
-        c.setFont("Helvetica-Bold", 6.5)
-        c.drawString(MARGEM, y_nome - i*3.8*mm, line)
+        c.setFont("Helvetica-Bold", 6.5*escala)
+        c.drawString(MARGEM, y_nome - i*3.8*mm*escala, line)
+
     detalhes = []
-    if cor: detalhes.append(f"Cor: {cor}")
-    if tam: detalhes.append(f"Tam: {tam}")
+    if tipo == 'roupa':
+        if p.get('cor'): detalhes.append(f"Cor: {p['cor']}")
+        if p.get('tam'): detalhes.append(f"Tam: {p['tam']}")
+    else:
+        if p.get('fabricacao'): detalhes.append(f"Fab: {p['fabricacao']}")
+        if p.get('lote'): detalhes.append(f"Lote: {p['lote']}")
     if detalhes:
-        c.setFont("Helvetica", 6)
+        c.setFont("Helvetica", 6*escala)
         c.setFillColor(colors.HexColor('#444444'))
-        y_det = H - FAIXA_H - (4.5 + min(len(nome_lines),2)*3.8)*mm
+        y_det = H - FAIXA_H - (4.5 + min(len(nome_lines),2)*3.8)*mm*escala
         c.drawString(MARGEM, y_det, "   |   ".join(detalhes))
+
     c.setStrokeColor(colors.HexColor('#CCCCCC'))
     c.setLineWidth(0.4)
-    c.line(MARGEM, 7.2*mm, W-MARGEM, 7.2*mm)
-    preco_fmt = f"R$ {preco}" if not str(preco).startswith("R$") else str(preco)
+    c.line(MARGEM, 7.2*mm*escala, W-MARGEM, 7.2*mm*escala)
+
     c.setFillColor(colors.black)
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(MARGEM, 2.8*mm, preco_fmt)
-    c.setFont("Helvetica", 5)
+    c.setFont("Helvetica-Bold", 12*escala)
+    if tipo == 'roupa':
+        preco = p.get('preco', '')
+        preco_fmt = f"R$ {preco}" if not str(preco).startswith("R$") else str(preco)
+        c.drawString(MARGEM, 2.8*mm*escala, preco_fmt)
+        rotulo = "PRECO SUGERIDO"
+    else:
+        c.drawString(MARGEM, 2.8*mm*escala, f"VAL: {p.get('validade','')}")
+        rotulo = "DATA DE VALIDADE"
+    c.setFont("Helvetica", 5*escala)
     c.setFillColor(colors.HexColor('#888888'))
-    c.drawRightString(W-MARGEM, 2.8*mm, "PRECO SUGERIDO")
+    c.drawRightString(W-MARGEM, 2.8*mm*escala, rotulo)
     c.showPage()
 
-def gerar_pdf_arquivo(produtos):
-    nome_arquivo = f"etiquetas_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+def gerar_pdf_arquivo(produtos, tipo='roupa', cfg=None):
+    cfg = {**DEFAULT_CONFIG, **(cfg or {})}
+    W = cfg['largura_mm'] * mm
+    H = cfg['altura_mm'] * mm
+    nome_arquivo = f"etiquetas_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.pdf"
     caminho = os.path.join(PDFS_DIR, nome_arquivo)
     c = canvas.Canvas(caminho, pagesize=(W, H))
     total = 0
     for p in produtos:
         for _ in range(int(p.get('qtde', 1))):
-            desenhar_etiqueta(c, p['nome'], p.get('cor',''), p.get('tam',''), p['preco'])
+            desenhar_etiqueta(c, p, tipo, cfg)
             total += 1
     c.save()
     return caminho, total, nome_arquivo
@@ -105,25 +157,36 @@ def ler_historico():
     except: return []
 
 # ── Rotas ────────────────────────────────────────────────────────
+@app.route('/')
+def index():
+    return render_template('index.html')
+
 @app.route('/health')
 def health():
     return jsonify({'status': 'ok'})
 
+@app.route('/config/default')
+def config_default():
+    return jsonify(DEFAULT_CONFIG)
+
 @app.route('/gerar', methods=['POST'])
 def gerar():
     try:
-        produtos = request.json.get('produtos', [])
+        data = request.json or {}
+        produtos = data.get('produtos', [])
+        tipo = data.get('tipo', 'roupa')
+        cfg = {**DEFAULT_CONFIG, **(data.get('config') or {})}
         if not produtos: return jsonify({'erro': 'Nenhum produto'}), 400
-        caminho, total, nome_arquivo = gerar_pdf_arquivo(produtos)
+        caminho, total, nome_arquivo = gerar_pdf_arquivo(produtos, tipo, cfg)
         salvar_historico({
             'id': nome_arquivo,
             'data': datetime.datetime.now().strftime('%d/%m/%Y %H:%M'),
+            'tipo': tipo,
             'produtos': len(produtos),
             'etiquetas': total,
             'arquivo': caminho,
             'nome_arquivo': nome_arquivo,
-            'lista': [{'nome': p['nome'], 'cor': p.get('cor',''), 'tam': p.get('tam',''),
-                       'preco': p['preco'], 'qtde': p.get('qtde',1)} for p in produtos]
+            'lista': produtos
         })
         return send_file(caminho, as_attachment=True, download_name='etiquetas.pdf', mimetype='application/pdf')
     except Exception as e:

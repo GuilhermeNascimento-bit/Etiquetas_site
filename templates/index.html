@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gerador de Etiquetas</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <h1>Gerador de Etiquetas</h1>
+  <div class="tipo-switch">
+    <button class="tipo-btn active" data-tipo="roupa">Etiqueta de Roupa</button>
+    <button class="tipo-btn" data-tipo="validade">Etiqueta de Validade</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- Coluna 1: Personalização -->
+  <section class="painel" id="painel-config">
+    <h2>Personalização</h2>
+
+    <label class="campo">
+      <span>Logo (opcional)</span>
+      <input type="file" id="logo-input" accept="image/*">
+    </label>
+    <div id="logo-preview-wrap" class="logo-preview-wrap" hidden>
+      <img id="logo-preview" alt="Logo">
+      <button type="button" id="logo-remove" class="btn-link">remover logo</button>
+    </div>
+
+    <label class="campo">
+      <span>Nome da loja / cabeçalho</span>
+      <input type="text" id="nome-loja" maxlength="40">
+    </label>
+
+    <div class="campo-grid2">
+      <label class="campo">
+        <span>Largura (mm)</span>
+        <input type="number" id="largura-mm" min="20" max="300" step="1">
+      </label>
+      <label class="campo">
+        <span>Altura (mm)</span>
+        <input type="number" id="altura-mm" min="10" max="200" step="1">
+      </label>
+    </div>
+
+    <div class="campo-grid2">
+      <label class="campo">
+        <span>Cor da faixa</span>
+        <input type="color" id="cor-faixa">
+      </label>
+      <label class="campo">
+        <span>Cor do texto da faixa</span>
+        <input type="color" id="cor-texto-faixa">
+      </label>
+    </div>
+
+    <button type="button" id="restaurar-padrao" class="btn-secundario">Restaurar padrão</button>
+  </section>
+
+  <!-- Coluna 2: Produtos -->
+  <section class="painel" id="painel-produtos">
+    <h2>Produtos</h2>
+
+    <div class="import-tools" id="import-tools">
+      <details>
+        <summary>Importar</summary>
+        <div class="import-body">
+          <label class="campo">
+            <span>Colar texto (uma linha por produto)</span>
+            <textarea id="importar-texto-area" rows="3" placeholder="Ex: CAMISETA: 39,90/29,90 (3)"></textarea>
+          </label>
+          <button type="button" id="btn-importar-texto" class="btn-secundario">Importar texto</button>
+          <label class="campo">
+            <span>Importar planilha (.xlsx)</span>
+            <input type="file" id="importar-xlsx-input" accept=".xlsx">
+          </label>
+          <label class="campo">
+            <span>Ler nota fiscal (PDF)</span>
+            <input type="file" id="importar-nf-input" accept="application/pdf">
+          </label>
+        </div>
+      </details>
+    </div>
+
+    <div id="produtos-lista"></div>
+    <button type="button" id="add-produto" class="btn-secundario">+ Adicionar produto</button>
+  </section>
+
+  <!-- Coluna 3: Preview e ações -->
+  <section class="painel" id="painel-preview">
+    <h2>Pré-visualização</h2>
+    <div class="preview-wrap">
+      <canvas id="preview-canvas"></canvas>
+    </div>
+    <p class="preview-hint">Mostrando o 1º produto da lista.</p>
+
+    <button type="button" id="gerar-pdf" class="btn-primario">Gerar PDF</button>
+    <p id="gerar-status" class="status-msg"></p>
+
+    <h2 class="historico-title">Histórico</h2>
+    <div id="historico-lista" class="historico-lista"></div>
+  </section>
+
+</main>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
