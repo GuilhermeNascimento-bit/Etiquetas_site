@@ -16,15 +16,18 @@ CORES = [
 app = Flask(__name__)
 CORS(app)
 
-# Configuração padrão da etiqueta — NÃO alterar sem querer mudar o
-# comportamento default (90x29mm, faixa preta, "DILIONE FITNESS").
+# Configuração padrão da etiqueta (modelo único/universal).
 DEFAULT_CONFIG = {
     'largura_mm': 90,
-    'altura_mm': 29,
+    'altura_mm': 42,
     'nome_loja': 'DILIONE FITNESS',
     'cor_faixa': '#000000',
     'cor_texto_faixa': '#FFFFFF',
+    'cor_destaque': '#000000',
     'logo_base64': None,
+    'fonte_nome': 9,
+    'fonte_destaque': 16,
+    'fonte_detalhe': 7,
 }
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 HIST_FILE = os.path.join(BASE_DIR, "historico.json")
@@ -46,22 +49,27 @@ def wrap_text(c, text, font, size, max_width):
     if current: lines.append(current)
     return lines
 
-def desenhar_etiqueta(c, p, tipo, cfg):
+def desenhar_etiqueta(c, p, cfg):
+    """Etiqueta universal: nome do produto + lista livre de campos
+    (rotulo/valor), cada um marcado ou não como "destaque". Campos em
+    destaque são desenhados grandes, em colunas do mesmo tamanho, todos
+    com o mesmo peso visual (ex.: Fabricação e Validade lado a lado)."""
     W = cfg['largura_mm'] * mm
     H = cfg['altura_mm'] * mm
     MARGEM  = 1.5 * mm
     AREA_W  = W - 2*MARGEM
-    # escala tipográfica: cresce com a altura, mas com limites pra não gerar
-    # texto absurdo em etiquetas muito pequenas/grandes.
-    escala  = max(0.6, min(2.2, cfg['altura_mm'] / 29.0))
-    # espaçamentos entre blocos crescem mais devagar que a fonte — evita o
-    # "vão" enorme no meio da etiqueta quando a altura é bem maior que 29mm.
-    gap_escala = 1 + (escala - 1) * 0.4
     FAIXA_H = H * (8.5/29.0)
+
     cor_faixa       = colors.HexColor(cfg.get('cor_faixa') or '#000000')
     cor_texto_faixa = colors.HexColor(cfg.get('cor_texto_faixa') or '#FFFFFF')
-    nome_loja       = cfg.get('nome_loja') or 'DILIONE FITNESS'
+    cor_destaque    = colors.HexColor(cfg.get('cor_destaque') or '#000000')
+    nome_loja       = cfg.get('nome_loja') or ''
 
+    fonte_nome     = float(cfg.get('fonte_nome') or 9)
+    fonte_destaque = float(cfg.get('fonte_destaque') or 16)
+    fonte_detalhe  = float(cfg.get('fonte_detalhe') or 7)
+
+    # Fundo + faixa superior (logo/nome da loja)
     c.setFillColor(colors.white)
     c.rect(0, 0, W, H, fill=1, stroke=0)
     c.setFillColor(cor_faixa)
@@ -74,7 +82,7 @@ def desenhar_etiqueta(c, p, tipo, cfg):
             b64data = logo_b64.split(',', 1)[1] if ',' in logo_b64 else logo_b64
             img = ImageReader(io.BytesIO(base64.b64decode(b64data)))
             iw, ih = img.getSize()
-            logo_h = FAIXA_H - 2*(1.2*mm*escala)
+            logo_h = FAIXA_H - 2.4*mm
             logo_w = logo_h * (iw/ih)
             logo_y = H - FAIXA_H + (FAIXA_H - logo_h)/2
             c.drawImage(img, MARGEM, logo_y, width=logo_w, height=logo_h,
@@ -83,90 +91,102 @@ def desenhar_etiqueta(c, p, tipo, cfg):
         except Exception:
             pass
 
-    c.setFillColor(cor_texto_faixa)
-    c.setFont("Helvetica-Bold", 7.5*escala)
-    c.drawString(text_x, H - FAIXA_H + 2.8*mm*escala, nome_loja)
+    if nome_loja:
+        fonte_loja = max(6, min(13, cfg['altura_mm']*0.3))
+        c.setFillColor(cor_texto_faixa)
+        c.setFont("Helvetica-Bold", fonte_loja)
+        c.drawString(text_x, H - FAIXA_H + FAIXA_H*0.36, nome_loja)
 
-    if tipo == 'roupa':
-        info_faixa = " | ".join(filter(None, [p.get('cor',''), p.get('tam','')]))
-        if info_faixa:
-            c.setFont("Helvetica", 5.5*escala)
-            c.drawRightString(W - MARGEM, H - FAIXA_H + 2.8*mm*escala, info_faixa)
+    # Campos: os marcados como destaque viram colunas grandes; o resto
+    # vira uma linha pequena de detalhes logo abaixo do nome.
+    campos    = p.get('campos') or []
+    destaques = [x for x in campos if x.get('destaque') and (x.get('valor') or x.get('rotulo'))]
+    detalhes  = [x for x in campos if not x.get('destaque') and (x.get('valor') or x.get('rotulo'))]
 
-    nome_lines = wrap_text(c, p['nome'].upper(), "Helvetica-Bold", 6.5*escala, AREA_W)[:2]
+    nome_lines = wrap_text(c, (p.get('nome') or '').upper(), "Helvetica-Bold", fonte_nome, AREA_W)[:2]
 
-    detalhes = []
-    if tipo == 'roupa':
-        if p.get('cor'): detalhes.append(f"Cor: {p['cor']}")
-        if p.get('tam'): detalhes.append(f"Tam: {p['tam']}")
-    else:
-        if p.get('fabricacao'): detalhes.append(f"Fab: {p['fabricacao']}")
-        if p.get('lote'): detalhes.append(f"Lote: {p['lote']}")
+    def altura_necessaria(fn, fd, fx, fator=1.0):
+        h = 2.6*mm*fator + fn*fator*0.85
+        if len(nome_lines) > 1: h += fn*fator*1.2
+        h += fn*fator*0.55 + 1.6*mm*fator
+        if detalhes: h += fd*fator*0.8 + fd*fator*0.4 + 1.6*mm*fator
+        h += 1.4*mm*fator + 2.6*mm*fator
+        if destaques:
+            legenda = max(5, fd*0.82)*fator
+            h += legenda*0.85 + legenda*0.4 + 0.8*mm*fator + fx*fator*0.78
+        return h
 
-    if tipo == 'roupa':
-        preco = p.get('preco', '')
-        valor_txt = f"R$ {preco}" if not str(preco).startswith("R$") else str(preco)
-        rotulo = "PRECO SUGERIDO"
-    else:
-        valor_txt = f"VAL: {p.get('validade','')}"
-        rotulo = "DATA DE VALIDADE"
-
-    # Bloco de conteúdo (nome + detalhes + linha + valor) é montado com
-    # distâncias fixas entre si e depois centralizado verticalmente no
-    # espaço abaixo da faixa — assim etiquetas mais altas ganham margem
-    # extra em cima/embaixo do bloco, em vez de um vão solto no meio.
-    S1, LINE_NOME, S3, S4, S5, S6 = (4.5*mm, 3.8*mm, 3.8*mm, 5.0*mm, 4.4*mm, 2.8*mm)
-    extra_linhas = max(0, len(nome_lines) - 1)
-    linhas_h = LINE_NOME*escala*extra_linhas       # altura do nome (fixa, nunca encolhe)
-    gaps_base = S1 + S3 + S4 + S5 + S6
-    gaps_h = gaps_base * gap_escala
+    # Espaçamentos e fontes são as escolhas do usuário; só encolhem
+    # (proporcionalmente, texto e espaço juntos) se não couberem na
+    # altura da etiqueta — nunca deixam o conteúdo vazar ou sobrepor.
     disponivel = H - FAIXA_H
-    # Se mesmo os espaçamentos "encolhidos" não couberem (nome com 2 linhas
-    # numa etiqueta baixa), reduz só os espaçamentos até caber — nunca deixa
-    # a linha/valor vazarem pra fora ou colidirem com o texto.
-    if gaps_h > 0 and (linhas_h + gaps_h) > disponivel:
-        gap_escala *= max(0, disponivel - linhas_h) / gaps_h
-        gaps_h = gaps_base * gap_escala
-    content_h = linhas_h + gaps_h
-    top_pad = max(0, (disponivel - content_h) / 2)
+    alvo = max(0, disponivel - 1.2*mm)   # margem fixa de segurança no rodapé
+    fator = 1.0
+    necessario = altura_necessaria(fonte_nome, fonte_detalhe, fonte_destaque)
+    if necessario > alvo and necessario > 0:
+        fator = max(0.4, alvo / necessario)
 
-    cursor = H - FAIXA_H - top_pad
-    cursor -= S1*gap_escala
+    cursor = H - FAIXA_H - 2.6*mm*fator
+
     c.setFillColor(colors.black)
-    c.setFont("Helvetica-Bold", 6.5*escala)
+    c.setFont("Helvetica-Bold", fonte_nome*fator)
+    cursor -= fonte_nome*fator*0.85
     c.drawString(MARGEM, cursor, nome_lines[0] if nome_lines else '')
     if len(nome_lines) > 1:
-        cursor -= LINE_NOME*escala
+        cursor -= fonte_nome*fator*1.2
         c.drawString(MARGEM, cursor, nome_lines[1])
-    cursor -= S3*gap_escala
+    cursor -= fonte_nome*fator*0.55 + 1.6*mm*fator
+
     if detalhes:
-        c.setFont("Helvetica", 6*escala)
-        c.setFillColor(colors.HexColor('#444444'))
-        c.drawString(MARGEM, cursor, "   |   ".join(detalhes))
-    cursor -= S4*gap_escala
+        texto_det = "   |   ".join(
+            f"{d['rotulo']}: {d['valor']}" if d.get('rotulo') and d.get('valor')
+            else (d.get('valor') or d.get('rotulo') or '')
+            for d in detalhes
+        )
+        c.setFont("Helvetica", fonte_detalhe*fator)
+        c.setFillColor(colors.HexColor('#555555'))
+        cursor -= fonte_detalhe*fator*0.8
+        c.drawString(MARGEM, cursor, texto_det)
+        cursor -= fonte_detalhe*fator*0.4 + 1.6*mm*fator
+
+    cursor -= 1.4*mm*fator
     y_linha = cursor
     c.setStrokeColor(colors.HexColor('#CCCCCC'))
-    c.setLineWidth(0.4)
+    c.setLineWidth(0.5)
     c.line(MARGEM, y_linha, W-MARGEM, y_linha)
-    cursor -= S5*gap_escala
+    cursor -= 2.6*mm*fator
 
-    rotulo_font = 5*escala
-    rotulo_w = c.stringWidth(rotulo, "Helvetica", rotulo_font)
-    valor_font = 12*escala
-    valor_w = c.stringWidth(valor_txt, "Helvetica-Bold", valor_font)
-    espaco_livre = AREA_W - rotulo_w - 2*mm
-    if espaco_livre > 0 and valor_w > espaco_livre:
-        valor_font = max(6, valor_font * (espaco_livre/valor_w))
+    if destaques:
+        n = len(destaques)
+        col_w = AREA_W / n
+        fonte_legenda = max(5, fonte_detalhe*0.82)*fator
 
-    c.setFillColor(colors.black)
-    c.setFont("Helvetica-Bold", valor_font)
-    c.drawString(MARGEM, cursor, valor_txt)
-    c.setFont("Helvetica", rotulo_font)
-    c.setFillColor(colors.HexColor('#888888'))
-    c.drawRightString(W-MARGEM, cursor, rotulo)
+        cursor -= fonte_legenda*0.85
+        y_legenda = cursor
+        c.setFont("Helvetica", fonte_legenda)
+        c.setFillColor(colors.HexColor('#777777'))
+        for i, d in enumerate(destaques):
+            x = MARGEM + i*col_w
+            c.drawString(x, y_legenda, (d.get('rotulo') or '').upper())
+
+        cursor -= fonte_legenda*0.4 + 0.8*mm*fator
+        cursor -= fonte_destaque*fator*0.78
+        y_valor = cursor
+        for i, d in enumerate(destaques):
+            x = MARGEM + i*col_w
+            max_w = col_w - (2*mm if i < n-1 else 0)
+            valor_txt = d.get('valor') or ''
+            f = fonte_destaque*fator
+            w = c.stringWidth(valor_txt, "Helvetica-Bold", f)
+            if max_w > 0 and w > max_w:
+                f = max(6, f * (max_w/w))
+            c.setFont("Helvetica-Bold", f)
+            c.setFillColor(cor_destaque)
+            c.drawString(x, y_valor, valor_txt)
+
     c.showPage()
 
-def gerar_pdf_arquivo(produtos, tipo='roupa', cfg=None):
+def gerar_pdf_arquivo(produtos, cfg=None):
     cfg = {**DEFAULT_CONFIG, **(cfg or {})}
     W = cfg['largura_mm'] * mm
     H = cfg['altura_mm'] * mm
@@ -176,7 +196,7 @@ def gerar_pdf_arquivo(produtos, tipo='roupa', cfg=None):
     total = 0
     for p in produtos:
         for _ in range(int(p.get('qtde', 1))):
-            desenhar_etiqueta(c, p, tipo, cfg)
+            desenhar_etiqueta(c, p, cfg)
             total += 1
     c.save()
     return caminho, total, nome_arquivo
@@ -213,14 +233,12 @@ def gerar():
     try:
         data = request.json or {}
         produtos = data.get('produtos', [])
-        tipo = data.get('tipo', 'roupa')
         cfg = {**DEFAULT_CONFIG, **(data.get('config') or {})}
         if not produtos: return jsonify({'erro': 'Nenhum produto'}), 400
-        caminho, total, nome_arquivo = gerar_pdf_arquivo(produtos, tipo, cfg)
+        caminho, total, nome_arquivo = gerar_pdf_arquivo(produtos, cfg)
         salvar_historico({
             'id': nome_arquivo,
             'data': datetime.datetime.now().strftime('%d/%m/%Y %H:%M'),
-            'tipo': tipo,
             'produtos': len(produtos),
             'etiquetas': total,
             'arquivo': caminho,
@@ -296,7 +314,7 @@ def importar_xlsx():
 def ler_nf():
     try:
         f = request.files.get('arquivo')
-        if not f: 
+        if not f:
             return jsonify({'erro': 'Nenhum arquivo enviado'}), 400
 
         # 1. Extração Gratuita de Texto
@@ -325,7 +343,7 @@ def ler_nf():
                     if c in linha.upper():
                         cor = c
                         break
-                
+
                 # Quantidade
                 qtde_m = re.search(r'\b(?:GG|G|M|P)\b\s+(\d+)\s+\d+,\d{2}', linha)
                 qtde = int(qtde_m.group(1)) if qtde_m else 1

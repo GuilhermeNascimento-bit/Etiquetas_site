@@ -4,14 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gerador de Etiquetas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 <header class="topbar">
-  <h1>Gerador de Etiquetas</h1>
-  <div class="tipo-switch">
-    <button class="tipo-btn active" data-tipo="roupa">Etiqueta de Roupa</button>
-    <button class="tipo-btn" data-tipo="validade">Etiqueta de Validade</button>
+  <div class="brand">
+    <span class="brand-mark">🏷️</span>
+    <div>
+      <h1>Gerador de Etiquetas</h1>
+      <p>Monte a etiqueta do seu jeito e gere o PDF pra imprimir</p>
+    </div>
   </div>
 </header>
 
@@ -21,39 +25,67 @@
   <section class="painel" id="painel-config">
     <h2>Personalização</h2>
 
-    <label class="campo">
-      <span>Logo (opcional)</span>
-      <input type="file" id="logo-input" accept="image/*">
-    </label>
-    <div id="logo-preview-wrap" class="logo-preview-wrap" hidden>
-      <img id="logo-preview" alt="Logo">
-      <button type="button" id="logo-remove" class="btn-link">remover logo</button>
-    </div>
-
-    <label class="campo">
-      <span>Nome da loja / cabeçalho</span>
-      <input type="text" id="nome-loja" maxlength="40">
-    </label>
-
-    <div class="campo-grid2">
+    <div class="grupo">
       <label class="campo">
-        <span>Largura (mm)</span>
-        <input type="number" id="largura-mm" min="20" max="300" step="1">
+        <span>Logo (opcional)</span>
+        <input type="file" id="logo-input" accept="image/*">
       </label>
+      <div id="logo-preview-wrap" class="logo-preview-wrap" hidden>
+        <img id="logo-preview" alt="Logo">
+        <button type="button" id="logo-remove" class="btn-link">remover</button>
+      </div>
+
       <label class="campo">
-        <span>Altura (mm)</span>
-        <input type="number" id="altura-mm" min="10" max="200" step="1">
+        <span>Nome da loja / cabeçalho</span>
+        <input type="text" id="nome-loja" maxlength="40">
       </label>
     </div>
 
-    <div class="campo-grid2">
-      <label class="campo">
-        <span>Cor da faixa</span>
-        <input type="color" id="cor-faixa">
+    <div class="grupo">
+      <h3>Tamanho da etiqueta</h3>
+      <div class="campo-grid2">
+        <label class="campo">
+          <span>Largura (mm)</span>
+          <input type="number" id="largura-mm" min="20" max="300" step="1">
+        </label>
+        <label class="campo">
+          <span>Altura (mm)</span>
+          <input type="number" id="altura-mm" min="10" max="300" step="1">
+        </label>
+      </div>
+    </div>
+
+    <div class="grupo">
+      <h3>Cores</h3>
+      <div class="campo-grid3">
+        <label class="campo">
+          <span>Faixa</span>
+          <input type="color" id="cor-faixa">
+        </label>
+        <label class="campo">
+          <span>Texto da faixa</span>
+          <input type="color" id="cor-texto-faixa">
+        </label>
+        <label class="campo">
+          <span>Destaque</span>
+          <input type="color" id="cor-destaque">
+        </label>
+      </div>
+    </div>
+
+    <div class="grupo">
+      <h3>Tamanho da fonte</h3>
+      <label class="campo campo-range">
+        <span>Nome do produto <b id="v-fonte-nome"></b></span>
+        <input type="range" id="fonte-nome" min="5" max="18" step="0.5">
       </label>
-      <label class="campo">
-        <span>Cor do texto da faixa</span>
-        <input type="color" id="cor-texto-faixa">
+      <label class="campo campo-range">
+        <span>Campos em destaque <b id="v-fonte-destaque"></b></span>
+        <input type="range" id="fonte-destaque" min="7" max="30" step="0.5">
+      </label>
+      <label class="campo campo-range">
+        <span>Detalhes <b id="v-fonte-detalhe"></b></span>
+        <input type="range" id="fonte-detalhe" min="4" max="14" step="0.5">
       </label>
     </div>
 
@@ -64,9 +96,9 @@
   <section class="painel" id="painel-produtos">
     <h2>Produtos</h2>
 
-    <div class="import-tools" id="import-tools">
+    <div class="import-tools">
       <details>
-        <summary>Importar</summary>
+        <summary>Importar de outra fonte</summary>
         <div class="import-body">
           <label class="campo">
             <span>Colar texto (uma linha por produto)</span>
@@ -74,11 +106,11 @@
           </label>
           <button type="button" id="btn-importar-texto" class="btn-secundario">Importar texto</button>
           <label class="campo">
-            <span>Importar planilha (.xlsx)</span>
+            <span>Planilha (.xlsx)</span>
             <input type="file" id="importar-xlsx-input" accept=".xlsx">
           </label>
           <label class="campo">
-            <span>Ler nota fiscal (PDF)</span>
+            <span>Nota fiscal (PDF)</span>
             <input type="file" id="importar-nf-input" accept="application/pdf">
           </label>
         </div>
@@ -95,7 +127,7 @@
     <div class="preview-wrap">
       <canvas id="preview-canvas"></canvas>
     </div>
-    <p class="preview-hint">Mostrando o 1º produto da lista.</p>
+    <p class="preview-hint">Mostrando o 1º produto da lista</p>
 
     <button type="button" id="gerar-pdf" class="btn-primario">Gerar PDF</button>
     <p id="gerar-status" class="status-msg"></p>
@@ -105,6 +137,18 @@
   </section>
 
 </main>
+
+<template id="tpl-campo">
+  <div class="campo-row">
+    <input type="text" class="campo-rotulo" placeholder="Rótulo (ex: Validade)">
+    <input type="text" class="campo-valor" placeholder="Valor (ex: 11/09/2026)">
+    <label class="toggle" title="Destacar este campo">
+      <input type="checkbox" class="campo-destaque">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </label>
+    <button type="button" class="campo-remover" title="Remover campo">✕</button>
+  </div>
+</template>
 
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>

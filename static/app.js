@@ -3,32 +3,20 @@
 
   const HARD_DEFAULT_CONFIG = {
     largura_mm: 90,
-    altura_mm: 29,
+    altura_mm: 42,
     nome_loja: 'DILIONE FITNESS',
     cor_faixa: '#000000',
     cor_texto_faixa: '#FFFFFF',
+    cor_destaque: '#000000',
     logo_base64: null,
+    fonte_nome: 9,
+    fonte_destaque: 16,
+    fonte_detalhe: 7,
   };
 
-  const FIELDS = {
-    roupa: [
-      { key: 'nome', label: 'Nome do produto', type: 'text', required: true, full: true },
-      { key: 'cor', label: 'Cor', type: 'text' },
-      { key: 'tam', label: 'Tamanho', type: 'text' },
-      { key: 'preco', label: 'Preço (R$)', type: 'text', required: true },
-      { key: 'qtde', label: 'Qtde', type: 'number', default: 1 },
-    ],
-    validade: [
-      { key: 'nome', label: 'Nome do produto', type: 'text', required: true, full: true },
-      { key: 'fabricacao', label: 'Fabricação', type: 'date' },
-      { key: 'validade', label: 'Validade', type: 'date', required: true },
-      { key: 'lote', label: 'Lote (opcional)', type: 'text' },
-      { key: 'qtde', label: 'Qtde', type: 'number', default: 1 },
-    ],
-  };
+  const PTMM = 0.3528; // 1pt em mm (equivalência usada também no PDF)
 
   const state = {
-    tipo: 'roupa',
     config: { ...HARD_DEFAULT_CONFIG },
     produtos: [],
     logoImgEl: null,
@@ -36,17 +24,15 @@
 
   const el = (id) => document.getElementById(id);
 
-  function novoProduto(tipo) {
-    const obj = {};
-    FIELDS[tipo].forEach((f) => { obj[f.key] = f.default !== undefined ? f.default : ''; });
-    return obj;
-  }
-
-  function formatDateBR(iso) {
-    if (!iso) return '';
-    const [y, m, d] = iso.split('-');
-    if (!y || !m || !d) return iso;
-    return `${d}/${m}/${y}`;
+  function novoProduto() {
+    return {
+      nome: '',
+      campos: [
+        { rotulo: 'Fabricação', valor: '', destaque: true },
+        { rotulo: 'Validade', valor: '', destaque: true },
+      ],
+      qtde: 1,
+    };
   }
 
   // ── Config panel ────────────────────────────────────────────────
@@ -56,6 +42,11 @@
     el('altura-mm').value = state.config.altura_mm;
     el('cor-faixa').value = state.config.cor_faixa || '#000000';
     el('cor-texto-faixa').value = state.config.cor_texto_faixa || '#ffffff';
+    el('cor-destaque').value = state.config.cor_destaque || '#000000';
+    el('fonte-nome').value = state.config.fonte_nome;
+    el('fonte-destaque').value = state.config.fonte_destaque;
+    el('fonte-detalhe').value = state.config.fonte_detalhe;
+    atualizarBadgesFonte();
     if (state.config.logo_base64) {
       el('logo-preview').src = state.config.logo_base64;
       el('logo-preview-wrap').hidden = false;
@@ -64,21 +55,26 @@
     }
   }
 
+  function atualizarBadgesFonte() {
+    el('v-fonte-nome').textContent = `${Number(el('fonte-nome').value).toFixed(1)}pt`;
+    el('v-fonte-destaque').textContent = `${Number(el('fonte-destaque').value).toFixed(1)}pt`;
+    el('v-fonte-detalhe').textContent = `${Number(el('fonte-detalhe').value).toFixed(1)}pt`;
+  }
+
   function bindConfigInputs() {
-    el('nome-loja').addEventListener('input', (e) => {
-      state.config.nome_loja = e.target.value; renderPreview();
-    });
-    el('largura-mm').addEventListener('input', (e) => {
-      state.config.largura_mm = Number(e.target.value) || HARD_DEFAULT_CONFIG.largura_mm; renderPreview();
-    });
-    el('altura-mm').addEventListener('input', (e) => {
-      state.config.altura_mm = Number(e.target.value) || HARD_DEFAULT_CONFIG.altura_mm; renderPreview();
-    });
-    el('cor-faixa').addEventListener('input', (e) => {
-      state.config.cor_faixa = e.target.value; renderPreview();
-    });
-    el('cor-texto-faixa').addEventListener('input', (e) => {
-      state.config.cor_texto_faixa = e.target.value; renderPreview();
+    el('nome-loja').addEventListener('input', (e) => { state.config.nome_loja = e.target.value; renderPreview(); });
+    el('largura-mm').addEventListener('input', (e) => { state.config.largura_mm = Number(e.target.value) || HARD_DEFAULT_CONFIG.largura_mm; renderPreview(); });
+    el('altura-mm').addEventListener('input', (e) => { state.config.altura_mm = Number(e.target.value) || HARD_DEFAULT_CONFIG.altura_mm; renderPreview(); });
+    el('cor-faixa').addEventListener('input', (e) => { state.config.cor_faixa = e.target.value; renderPreview(); });
+    el('cor-texto-faixa').addEventListener('input', (e) => { state.config.cor_texto_faixa = e.target.value; renderPreview(); });
+    el('cor-destaque').addEventListener('input', (e) => { state.config.cor_destaque = e.target.value; renderPreview(); });
+
+    ['fonte-nome', 'fonte-destaque', 'fonte-detalhe'].forEach((id) => {
+      el(id).addEventListener('input', (e) => {
+        state.config[id.replace('-', '_')] = Number(e.target.value);
+        atualizarBadgesFonte();
+        renderPreview();
+      });
     });
 
     el('logo-input').addEventListener('change', (e) => {
@@ -118,11 +114,38 @@
   function renderProdutos() {
     const wrap = el('produtos-lista');
     wrap.innerHTML = '';
-    const fields = FIELDS[state.tipo];
 
     state.produtos.forEach((produto, idx) => {
       const card = document.createElement('div');
       card.className = 'produto-card';
+
+      const topo = document.createElement('div');
+      topo.className = 'produto-topo';
+
+      const nomeLabel = document.createElement('label');
+      nomeLabel.className = 'campo';
+      nomeLabel.innerHTML = '<span>Nome do produto</span>';
+      const nomeInput = document.createElement('input');
+      nomeInput.type = 'text';
+      nomeInput.className = 'nome-input';
+      nomeInput.placeholder = 'Ex: Penne Artesanal';
+      nomeInput.value = produto.nome;
+      nomeInput.addEventListener('input', (e) => { produto.nome = e.target.value; renderPreview(); });
+      nomeLabel.appendChild(nomeInput);
+
+      const qtdeLabel = document.createElement('label');
+      qtdeLabel.className = 'campo';
+      qtdeLabel.innerHTML = '<span>Qtde</span>';
+      const qtdeInput = document.createElement('input');
+      qtdeInput.type = 'number';
+      qtdeInput.min = '1';
+      qtdeInput.className = 'qtde-input';
+      qtdeInput.value = produto.qtde;
+      qtdeInput.addEventListener('input', (e) => { produto.qtde = e.target.value; });
+      qtdeLabel.appendChild(qtdeInput);
+
+      topo.appendChild(nomeLabel);
+      topo.appendChild(qtdeLabel);
 
       if (state.produtos.length > 1) {
         const btnDel = document.createElement('button');
@@ -135,16 +158,40 @@
           renderProdutos();
           renderPreview();
         });
-        card.appendChild(btnDel);
+        topo.appendChild(btnDel);
       }
+      card.appendChild(topo);
 
-      const fullField = fields.find((f) => f.full);
-      if (fullField) card.appendChild(criarInput(produto, fullField, idx));
+      const label = document.createElement('div');
+      label.className = 'campos-label';
+      label.textContent = 'Campos (ligue o interruptor pra destacar)';
+      card.appendChild(label);
 
-      const linha = document.createElement('div');
-      linha.className = 'linha';
-      fields.filter((f) => !f.full).forEach((f) => linha.appendChild(criarInput(produto, f, idx)));
-      card.appendChild(linha);
+      const camposWrap = document.createElement('div');
+      produto.campos.forEach((campo, cidx) => camposWrap.appendChild(criarLinhaCampo(produto, campo, cidx)));
+      card.appendChild(camposWrap);
+
+      const addRow = document.createElement('div');
+      addRow.className = 'add-campo-row';
+      const btnAddDestaque = document.createElement('button');
+      btnAddDestaque.type = 'button';
+      btnAddDestaque.textContent = '+ Campo em destaque';
+      btnAddDestaque.addEventListener('click', () => {
+        produto.campos.push({ rotulo: '', valor: '', destaque: true });
+        renderProdutos();
+        renderPreview();
+      });
+      const btnAddDetalhe = document.createElement('button');
+      btnAddDetalhe.type = 'button';
+      btnAddDetalhe.textContent = '+ Campo detalhe';
+      btnAddDetalhe.addEventListener('click', () => {
+        produto.campos.push({ rotulo: '', valor: '', destaque: false });
+        renderProdutos();
+        renderPreview();
+      });
+      addRow.appendChild(btnAddDestaque);
+      addRow.appendChild(btnAddDetalhe);
+      card.appendChild(addRow);
 
       wrap.appendChild(card);
     });
@@ -157,46 +204,37 @@
     }
   }
 
-  function criarInput(produto, field, idx) {
-    const label = document.createElement('label');
-    label.className = 'campo';
-    const span = document.createElement('span');
-    span.textContent = field.label;
-    const input = document.createElement('input');
-    input.type = field.type;
-    input.value = produto[field.key] ?? '';
-    if (field.type === 'number') input.min = '1';
-    input.addEventListener('input', (e) => {
-      produto[field.key] = field.type === 'number' ? e.target.value : e.target.value;
+  function criarLinhaCampo(produto, campo, cidx) {
+    const tpl = el('tpl-campo').content.cloneNode(true);
+    const row = tpl.querySelector('.campo-row');
+    const rotuloInput = row.querySelector('.campo-rotulo');
+    const valorInput = row.querySelector('.campo-valor');
+    const destaqueInput = row.querySelector('.campo-destaque');
+    const removerBtn = row.querySelector('.campo-remover');
+
+    rotuloInput.value = campo.rotulo || '';
+    valorInput.value = campo.valor || '';
+    destaqueInput.checked = !!campo.destaque;
+
+    rotuloInput.addEventListener('input', (e) => { campo.rotulo = e.target.value; renderPreview(); });
+    valorInput.addEventListener('input', (e) => { campo.valor = e.target.value; renderPreview(); });
+    destaqueInput.addEventListener('change', (e) => { campo.destaque = e.target.checked; renderPreview(); });
+    removerBtn.addEventListener('click', () => {
+      produto.campos.splice(cidx, 1);
+      renderProdutos();
       renderPreview();
     });
-    label.appendChild(span);
-    label.appendChild(input);
-    return label;
+
+    return row;
   }
 
   el('add-produto').addEventListener('click', () => {
-    state.produtos.push(novoProduto(state.tipo));
+    state.produtos.push(novoProduto());
     renderProdutos();
     renderPreview();
   });
 
-  // ── Tipo switch ─────────────────────────────────────────────────
-  document.querySelectorAll('.tipo-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const tipo = btn.dataset.tipo;
-      if (tipo === state.tipo) return;
-      state.tipo = tipo;
-      document.querySelectorAll('.tipo-btn').forEach((b) => b.classList.toggle('active', b === btn));
-      el('import-tools').hidden = tipo !== 'roupa';
-      state.produtos = [novoProduto(tipo)];
-      renderProdutos();
-      renderPreview();
-    });
-  });
-  el('import-tools').hidden = state.tipo !== 'roupa';
-
-  // ── Preview (canvas) ────────────────────────────────────────────
+  // ── Preview (canvas) — espelha exatamente app.py:desenhar_etiqueta ─
   function wrapTextCanvas(ctx, text, maxWidth) {
     const words = text.split(' ').filter(Boolean);
     const lines = [];
@@ -214,22 +252,20 @@
     const canvas = el('preview-canvas');
     const ctx = canvas.getContext('2d');
     const cfg = state.config;
-    const tipo = state.tipo;
-    const produto = state.produtos[0] || {};
+    const produto = state.produtos[0] || { nome: '', campos: [], qtde: 1 };
 
     const PXPERMM = 8;
     const Wmm = Number(cfg.largura_mm) || 90;
-    const Hmm = Number(cfg.altura_mm) || 29;
+    const Hmm = Number(cfg.altura_mm) || 42;
     canvas.width = Math.max(1, Math.round(Wmm * PXPERMM));
     canvas.height = Math.max(1, Math.round(Hmm * PXPERMM));
 
     const MARGEM = 1.5;
     const AREA_W = Wmm - 2 * MARGEM;
-    const escala = Math.max(0.6, Math.min(2.2, Hmm / 29));
-    let gapEscala = 1 + (escala - 1) * 0.4;
     const FAIXA_H = Hmm * (8.5 / 29);
     const mmpx = (v) => v * PXPERMM;
-    const ptpx = (pt) => pt * escala * 0.3528 * PXPERMM;
+    const ptmm = (pt) => pt * PTMM;
+    const ptpx = (pt) => mmpx(ptmm(pt));
     const FONT = 'Helvetica, Arial, sans-serif';
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -244,106 +280,114 @@
     let textXmm = MARGEM;
     const logoImg = state.logoImgEl;
     if (cfg.logo_base64 && logoImg && logoImg.complete && logoImg.naturalWidth) {
-      const logoHmm = FAIXA_H - 2 * (1.2 * escala);
+      const logoHmm = FAIXA_H - 2.4;
       const logoWmm = logoHmm * (logoImg.naturalWidth / logoImg.naturalHeight);
       const logoYmm = (FAIXA_H - logoHmm) / 2;
       ctx.drawImage(logoImg, mmpx(MARGEM), mmpx(logoYmm), mmpx(logoWmm), mmpx(logoHmm));
       textXmm = MARGEM + logoWmm + 1.5;
     }
 
-    ctx.fillStyle = cfg.cor_texto_faixa || '#ffffff';
-    ctx.font = `bold ${ptpx(7.5)}px ${FONT}`;
-    ctx.fillText(cfg.nome_loja || 'DILIONE FITNESS', mmpx(textXmm), mmpx(FAIXA_H - 2.8 * escala));
-
-    if (tipo === 'roupa') {
-      const infoFaixa = [produto.cor, produto.tam].filter(Boolean).join(' | ');
-      if (infoFaixa) {
-        ctx.font = `${ptpx(5.5)}px ${FONT}`;
-        ctx.textAlign = 'right';
-        ctx.fillText(infoFaixa, mmpx(Wmm - MARGEM), mmpx(FAIXA_H - 2.8 * escala));
-        ctx.textAlign = 'left';
-      }
+    if (cfg.nome_loja) {
+      const fonteLoja = Math.max(6, Math.min(13, Hmm * 0.3));
+      ctx.fillStyle = cfg.cor_texto_faixa || '#ffffff';
+      ctx.font = `bold ${ptpx(fonteLoja)}px ${FONT}`;
+      ctx.fillText(cfg.nome_loja, mmpx(textXmm), mmpx(FAIXA_H * 0.64));
     }
 
+    const campos = produto.campos || [];
+    const destaques = campos.filter((c) => c.destaque && (c.valor || c.rotulo));
+    const detalhes = campos.filter((c) => !c.destaque && (c.valor || c.rotulo));
+
+    ctx.font = `bold ${ptpx(cfg.fonte_nome)}px ${FONT}`;
     const nomeLines = wrapTextCanvas(ctx, (produto.nome || '').toUpperCase(), mmpx(AREA_W)).slice(0, 2);
 
-    const detalhes = [];
-    if (tipo === 'roupa') {
-      if (produto.cor) detalhes.push('Cor: ' + produto.cor);
-      if (produto.tam) detalhes.push('Tam: ' + produto.tam);
-    } else {
-      if (produto.fabricacao) detalhes.push('Fab: ' + formatDateBR(produto.fabricacao));
-      if (produto.lote) detalhes.push('Lote: ' + produto.lote);
+    function alturaNecessaria(fnPt, fdPt, fxPt, fator) {
+      const fn = ptmm(fnPt) * fator, fd = ptmm(fdPt) * fator;
+      let h = 2.6 * fator + fn * 0.85;
+      if (nomeLines.length > 1) h += fn * 1.2;
+      h += fn * 0.55 + 1.6 * fator;
+      if (detalhes.length) h += fd * 0.8 + fd * 0.4 + 1.6 * fator;
+      h += 1.4 * fator + 2.6 * fator;
+      if (destaques.length) {
+        const legenda = ptmm(Math.max(5, fdPt * 0.82)) * fator;
+        h += legenda * 0.85 + legenda * 0.4 + 0.8 * fator + ptmm(fxPt) * fator * 0.78;
+      }
+      return h;
     }
 
-    let valorTxt, rotulo;
-    if (tipo === 'roupa') {
-      const preco = (produto.preco || '').toString();
-      valorTxt = preco.startsWith('R$') ? preco : `R$ ${preco}`;
-      rotulo = 'PRECO SUGERIDO';
-    } else {
-      valorTxt = `VAL: ${formatDateBR(produto.validade)}`;
-      rotulo = 'DATA DE VALIDADE';
-    }
-
-    // Bloco de conteúdo (nome + detalhes + linha + valor) centralizado no
-    // espaço abaixo da faixa — espelha exatamente a lógica do PDF (app.py).
-    const S1 = 4.5, LINE_NOME = 3.8, S3 = 3.8, S4 = 5.0, S5 = 4.4, S6 = 2.8;
-    const extraLinhas = Math.max(0, nomeLines.length - 1);
-    const linhasH = LINE_NOME * escala * extraLinhas;
-    const gapsBase = S1 + S3 + S4 + S5 + S6;
-    let gapsH = gapsBase * gapEscala;
     const disponivel = Hmm - FAIXA_H;
-    if (gapsH > 0 && (linhasH + gapsH) > disponivel) {
-      gapEscala *= Math.max(0, disponivel - linhasH) / gapsH;
-      gapsH = gapsBase * gapEscala;
+    const alvo = Math.max(0, disponivel - 1.2);
+    let fator = 1.0;
+    const necessario = alturaNecessaria(cfg.fonte_nome, cfg.fonte_detalhe, cfg.fonte_destaque, 1.0);
+    if (necessario > alvo && necessario > 0) {
+      fator = Math.max(0.4, alvo / necessario);
     }
-    const contentH = linhasH + gapsH;
-    const topPad = Math.max(0, (disponivel - contentH) / 2);
 
-    let cursor = FAIXA_H + topPad;
-    cursor += S1 * gapEscala;
+    let cursor = FAIXA_H;
+    cursor += 2.6 * fator;
+    const fnMM = ptmm(cfg.fonte_nome) * fator;
     ctx.fillStyle = '#000000';
-    ctx.font = `bold ${ptpx(6.5)}px ${FONT}`;
+    ctx.font = `bold ${ptpx(cfg.fonte_nome * fator)}px ${FONT}`;
+    cursor += fnMM * 0.85;
     ctx.fillText(nomeLines[0] || '', mmpx(MARGEM), mmpx(cursor));
     if (nomeLines.length > 1) {
-      cursor += LINE_NOME * escala;
+      cursor += fnMM * 1.2;
       ctx.fillText(nomeLines[1], mmpx(MARGEM), mmpx(cursor));
     }
-    cursor += S3 * gapEscala;
+    cursor += fnMM * 0.55 + 1.6 * fator;
+
     if (detalhes.length) {
-      ctx.font = `${ptpx(6)}px ${FONT}`;
-      ctx.fillStyle = '#444444';
-      ctx.fillText(detalhes.join('   |   '), mmpx(MARGEM), mmpx(cursor));
+      const txt = detalhes.map((d) => (d.rotulo && d.valor) ? `${d.rotulo}: ${d.valor}` : (d.valor || d.rotulo || '')).join('   |   ');
+      const fdMM = ptmm(cfg.fonte_detalhe) * fator;
+      ctx.font = `${ptpx(cfg.fonte_detalhe * fator)}px ${FONT}`;
+      ctx.fillStyle = '#555555';
+      cursor += fdMM * 0.8;
+      ctx.fillText(txt, mmpx(MARGEM), mmpx(cursor));
+      cursor += fdMM * 0.4 + 1.6 * fator;
     }
-    cursor += S4 * gapEscala;
+
+    cursor += 1.4 * fator;
+    const yLinha = cursor;
     ctx.strokeStyle = '#cccccc';
-    ctx.lineWidth = Math.max(1, mmpx(0.4));
+    ctx.lineWidth = Math.max(1, mmpx(0.5));
     ctx.beginPath();
-    ctx.moveTo(mmpx(MARGEM), mmpx(cursor));
-    ctx.lineTo(mmpx(Wmm - MARGEM), mmpx(cursor));
+    ctx.moveTo(mmpx(MARGEM), mmpx(yLinha));
+    ctx.lineTo(mmpx(Wmm - MARGEM), mmpx(yLinha));
     ctx.stroke();
-    cursor += S5 * gapEscala;
+    cursor += 2.6 * fator;
 
-    const rotuloFontPx = ptpx(5);
-    ctx.font = `${rotuloFontPx}px ${FONT}`;
-    const rotuloWpx = ctx.measureText(rotulo).width;
-    let valorFontPx = ptpx(12);
-    ctx.font = `bold ${valorFontPx}px ${FONT}`;
-    const valorWpx = ctx.measureText(valorTxt).width;
-    const espacoLivrePx = mmpx(AREA_W) - rotuloWpx - mmpx(2);
-    if (espacoLivrePx > 0 && valorWpx > espacoLivrePx) {
-      valorFontPx = Math.max(mmpx(2), valorFontPx * (espacoLivrePx / valorWpx));
+    if (destaques.length) {
+      const n = destaques.length;
+      const colW = AREA_W / n;
+      const legendaPt = Math.max(5, cfg.fonte_detalhe * 0.82) * fator;
+      const legendaMM = ptmm(legendaPt);
+      cursor += legendaMM * 0.85;
+      const yLegenda = cursor;
+      ctx.font = `${ptpx(legendaPt)}px ${FONT}`;
+      ctx.fillStyle = '#777777';
+      destaques.forEach((d, i) => {
+        const x = MARGEM + i * colW;
+        ctx.fillText((d.rotulo || '').toUpperCase(), mmpx(x), mmpx(yLegenda));
+      });
+      cursor += legendaMM * 0.4 + 0.8 * fator;
+      const fxMM = ptmm(cfg.fonte_destaque) * fator;
+      cursor += fxMM * 0.78;
+      const yValor = cursor;
+      destaques.forEach((d, i) => {
+        const x = MARGEM + i * colW;
+        const maxWmm = colW - (i < n - 1 ? 2 : 0);
+        const valorTxt = d.valor || '';
+        let fPt = cfg.fonte_destaque * fator;
+        ctx.font = `bold ${ptpx(fPt)}px ${FONT}`;
+        const wMm = ctx.measureText(valorTxt).width / PXPERMM;
+        if (maxWmm > 0 && wMm > maxWmm) {
+          fPt = Math.max(6, fPt * (maxWmm / wMm));
+        }
+        ctx.font = `bold ${ptpx(fPt)}px ${FONT}`;
+        ctx.fillStyle = cfg.cor_destaque || '#000000';
+        ctx.fillText(valorTxt, mmpx(x), mmpx(yValor));
+      });
     }
-
-    ctx.fillStyle = '#000000';
-    ctx.font = `bold ${valorFontPx}px ${FONT}`;
-    ctx.fillText(valorTxt, mmpx(MARGEM), mmpx(cursor));
-    ctx.font = `${rotuloFontPx}px ${FONT}`;
-    ctx.fillStyle = '#888888';
-    ctx.textAlign = 'right';
-    ctx.fillText(rotulo, mmpx(Wmm - MARGEM), mmpx(cursor));
-    ctx.textAlign = 'left';
   }
 
   // ── Gerar PDF ───────────────────────────────────────────────────
@@ -353,32 +397,20 @@
     p.className = 'status-msg' + (tipo ? ' ' + tipo : '');
   }
 
-  function validarProdutos() {
-    const fields = FIELDS[state.tipo].filter((f) => f.required);
-    for (const p of state.produtos) {
-      for (const f of fields) {
-        if (!String(p[f.key] || '').trim()) return `Preencha "${f.label}" em todos os produtos.`;
-      }
-    }
-    return null;
-  }
-
   function montarPayloadProdutos() {
-    const fields = FIELDS[state.tipo];
-    return state.produtos.map((p) => {
-      const out = {};
-      fields.forEach((f) => {
-        out[f.key] = f.type === 'date' ? formatDateBR(p[f.key]) : p[f.key];
-      });
-      out.qtde = Number(p.qtde) || 1;
-      return out;
-    });
+    return state.produtos.map((p) => ({
+      nome: p.nome,
+      campos: (p.campos || []).map((c) => ({ rotulo: c.rotulo || '', valor: c.valor || '', destaque: !!c.destaque })),
+      qtde: Number(p.qtde) || 1,
+    }));
   }
 
   el('gerar-pdf').addEventListener('click', async () => {
     if (state.produtos.length === 0) { statusMsg('Adicione ao menos um produto.', 'erro'); return; }
-    const erro = validarProdutos();
-    if (erro) { statusMsg(erro, 'erro'); return; }
+    if (state.produtos.some((p) => !String(p.nome || '').trim())) {
+      statusMsg('Preencha o nome de todos os produtos.', 'erro');
+      return;
+    }
 
     const btn = el('gerar-pdf');
     btn.disabled = true;
@@ -387,7 +419,7 @@
       const resp = await fetch('/gerar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tipo: state.tipo, config: state.config, produtos: montarPayloadProdutos() }),
+        body: JSON.stringify({ config: state.config, produtos: montarPayloadProdutos() }),
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
@@ -411,7 +443,24 @@
     }
   });
 
-  // ── Importação (só etiqueta de roupa) ──────────────────────────
+  // ── Importação (mapeada pro modelo universal de campos) ─────────
+  function aplicarImportacao(produtos) {
+    if (!produtos || !produtos.length) { statusMsg('Nenhum produto encontrado.', 'erro'); return; }
+    state.produtos = produtos.map((p) => {
+      const campos = [];
+      if (p.preco) {
+        const preco = String(p.preco).startsWith('R$') ? p.preco : `R$ ${p.preco}`;
+        campos.push({ rotulo: 'Preço', valor: preco, destaque: true });
+      }
+      if (p.cor) campos.push({ rotulo: 'Cor', valor: p.cor, destaque: false });
+      if (p.tam) campos.push({ rotulo: 'Tam', valor: p.tam, destaque: false });
+      return { nome: p.nome || '', campos, qtde: p.qtde || 1 };
+    });
+    renderProdutos();
+    renderPreview();
+    statusMsg(`${produtos.length} produto(s) importado(s).`, 'ok');
+  }
+
   el('btn-importar-texto').addEventListener('click', async () => {
     const texto = el('importar-texto-area').value;
     if (!texto.trim()) return;
@@ -463,17 +512,6 @@
     }
   });
 
-  function aplicarImportacao(produtos) {
-    if (!produtos || !produtos.length) { statusMsg('Nenhum produto encontrado.', 'erro'); return; }
-    state.produtos = produtos.map((p) => ({
-      nome: p.nome || '', cor: p.cor || '', tam: p.tam || '',
-      preco: p.preco || '', qtde: p.qtde || 1,
-    }));
-    renderProdutos();
-    renderPreview();
-    statusMsg(`${produtos.length} produto(s) importado(s).`, 'ok');
-  }
-
   // ── Histórico ───────────────────────────────────────────────────
   async function carregarHistorico() {
     const wrap = el('historico-lista');
@@ -488,13 +526,9 @@
       lista.forEach((h) => {
         const item = document.createElement('div');
         item.className = 'historico-item';
-        const tipoLabel = h.tipo === 'validade' ? 'validade' : 'roupa';
         item.innerHTML = `
-          <div class="linha1">
-            <span>${h.data || ''}</span>
-            <span class="badge">${tipoLabel}</span>
-          </div>
-          <div>${h.produtos || 0} produto(s) · ${h.etiquetas || 0} etiqueta(s)</div>
+          <div class="linha1"><span>${h.data || ''}</span></div>
+          <div class="resumo">${h.produtos || 0} produto(s) · ${h.etiquetas || 0} etiqueta(s)</div>
           <div class="acoes">
             <a href="/historico/download/${encodeURIComponent(h.nome_arquivo || h.id)}">baixar</a>
             <button type="button" class="excluir">excluir</button>
@@ -521,7 +555,7 @@
     }
     bindConfigInputs();
     preencherCamposConfig();
-    state.produtos = [novoProduto(state.tipo)];
+    state.produtos = [novoProduto()];
     renderProdutos();
     renderPreview();
     carregarHistorico();
