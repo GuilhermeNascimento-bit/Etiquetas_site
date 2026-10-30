@@ -1,5 +1,4 @@
-import os, re, json, datetime, tempfile, base64, io
-import pypdf
+import os, json, datetime, base64, io
 from flask import Flask, request, jsonify, send_file, render_template
 from flask_cors import CORS
 from reportlab.pdfgen import canvas
@@ -7,16 +6,10 @@ from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.lib.utils import ImageReader
 
-# No topo do app.py, logo após os imports:
-CORES = [
-    'ROXO TRENDY', 'CROMO REFLETIVO', 'NAUTICO', 'BRANCO', 'DESEJO',
-    'PRETO', 'SIDERAL', 'PINK', 'MARFIM', 'VIOLETA', 'RUBI',
-    'BANDANA', 'LIQUOR', 'ORVALHO', 'ROSEWOOD',
-]
 app = Flask(__name__)
 CORS(app)
 
-# Configuração padrão da etiqueta (modelo único/universal).
+# Configuração padrão da etiqueta. As medidas são as da bobina da impressora.
 DEFAULT_CONFIG = {
     'largura_mm': 90,
     'altura_mm': 42,
@@ -25,18 +18,33 @@ DEFAULT_CONFIG = {
     'cor_texto_faixa': '#FFFFFF',
     'cor_destaque': '#000000',
     'logo_base64': None,
-    'fonte_nome': 9,
-    'fonte_destaque': 16,
-    'fonte_detalhe': 7,
 }
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 HIST_FILE = os.path.join(BASE_DIR, "historico.json")
 PDFS_DIR  = os.path.join(BASE_DIR, "pdfs_gerados")
 os.makedirs(PDFS_DIR, exist_ok=True)
 
+# Estrutura fixa da etiqueta "Identificação do Alimento" (sai em branco,
+# para preencher à mão). Cada linha é uma sequência de segmentos:
+#   ('b', txt) rótulo em negrito   ('t', txt) texto normal
+#   ('ln', em) linha em branco     ('fill',)  linha até o fim
+#   ('sp', em) espaço              ('box',)   caixinha de marcar
+# Larguras em "em" (múltiplos do tamanho da fonte). Esta mesma tabela
+# existe em static/app.js para a pré-visualização — mantenha as duas iguais.
+DATA = [('ln', 2), ('t', '/'), ('ln', 2), ('t', '/'), ('ln', 3.2)]
+LINHAS = [
+    {'seg': [('b', 'Produto:'), ('sp', .4), ('fill',)]},
+    {'seg': [('b', 'Fabricação/Abertura:'), ('sp', .4), *DATA, ('sp', 1),
+             ('b', 'Hora:'), ('sp', .4), ('ln', 1.8), ('t', ':'), ('ln', 1.8)]},
+    {'seg': [('b', 'VALIDADE:'), ('sp', .4), *DATA], 'destaque': True},
+    {'seg': [('b', 'Responsável:'), ('sp', .4), ('fill',)]},
+    {'seg': [('b', 'Conservação:'), ('sp', .5), ('box',), ('t', 'Refrigerado'), ('sp', .7),
+             ('box',), ('t', 'Congelado'), ('sp', .7), ('box',), ('t', 'Ambiente')]},
+]
+CAIXA_EM, CAIXA_GAP_EM, FILL_MIN_EM = .75, .3, 3
+
 # ── Helpers PDF ──────────────────────────────────────────────────
 def wrap_text(c, text, font, size, max_width):
-    c.setFont(font, size)
     words = text.split()
     lines, current = [], ''
     for word in words:
@@ -49,157 +57,117 @@ def wrap_text(c, text, font, size, max_width):
     if current: lines.append(current)
     return lines
 
-def desenhar_etiqueta(c, p, cfg):
-    """Etiqueta universal: nome do produto + lista livre de campos
-    (rotulo/valor), cada um marcado ou não como "destaque". Campos em
-    destaque são desenhados grandes, em colunas do mesmo tamanho, todos
-    com o mesmo peso visual (ex.: Fabricação e Validade lado a lado)."""
+def largura_seg(c, s, fs):
+    tipo = s[0]
+    if tipo == 'b':    return c.stringWidth(s[1], "Helvetica-Bold", fs)
+    if tipo == 't':    return c.stringWidth(s[1], "Helvetica", fs)
+    if tipo in ('ln', 'sp'): return s[1] * fs
+    if tipo == 'box':  return (CAIXA_EM + CAIXA_GAP_EM) * fs
+    if tipo == 'fill': return FILL_MIN_EM * fs
+    return 0
+
+def desenhar_etiqueta(c, cfg):
+    """Etiqueta de identificação do alimento, em branco (campos com linhas
+    e caixinhas para preencher à mão), no tamanho da bobina."""
     W = cfg['largura_mm'] * mm
     H = cfg['altura_mm'] * mm
-    MARGEM  = 1.5 * mm
+    MARGEM  = 2 * mm
     AREA_W  = W - 2*MARGEM
-    FAIXA_H = H * (8.5/29.0)
+    FAIXA_H = H * 0.24
 
     cor_faixa       = colors.HexColor(cfg.get('cor_faixa') or '#000000')
     cor_texto_faixa = colors.HexColor(cfg.get('cor_texto_faixa') or '#FFFFFF')
     cor_destaque    = colors.HexColor(cfg.get('cor_destaque') or '#000000')
-    nome_loja       = cfg.get('nome_loja') or ''
+    nome_loja       = (cfg.get('nome_loja') or '').upper()
 
-    fonte_nome     = float(cfg.get('fonte_nome') or 9)
-    fonte_destaque = float(cfg.get('fonte_destaque') or 16)
-    fonte_detalhe  = float(cfg.get('fonte_detalhe') or 7)
-
-    # Fundo + faixa superior (logo/nome da loja)
+    # Fundo + faixa superior
     c.setFillColor(colors.white)
     c.rect(0, 0, W, H, fill=1, stroke=0)
     c.setFillColor(cor_faixa)
     c.rect(0, H - FAIXA_H, W, FAIXA_H, fill=1, stroke=0)
 
-    text_x = MARGEM
+    # Título à esquerda (2 linhas), loja/logo à direita
+    fonte_titulo = FAIXA_H * 0.32
+    c.setFillColor(cor_texto_faixa)
+    c.setFont("Helvetica-Bold", fonte_titulo)
+    c.drawString(MARGEM, H - FAIXA_H*0.44, "IDENTIFICAÇÃO DO")
+    c.drawString(MARGEM, H - FAIXA_H*0.84, "ALIMENTO")
+    titulo_w = c.stringWidth("IDENTIFICAÇÃO DO", "Helvetica-Bold", fonte_titulo)
+    direita_max = W - MARGEM - (MARGEM + titulo_w + 3*mm)
+
     logo_b64 = cfg.get('logo_base64')
+    desenhou_logo = False
     if logo_b64:
         try:
             b64data = logo_b64.split(',', 1)[1] if ',' in logo_b64 else logo_b64
             img = ImageReader(io.BytesIO(base64.b64decode(b64data)))
             iw, ih = img.getSize()
-            logo_h = FAIXA_H - 2.4*mm
-            logo_w = logo_h * (iw/ih)
-            logo_y = H - FAIXA_H + (FAIXA_H - logo_h)/2
-            c.drawImage(img, MARGEM, logo_y, width=logo_w, height=logo_h,
-                        mask='auto', preserveAspectRatio=True)
-            text_x = MARGEM + logo_w + 1.5*mm
+            logo_h = FAIXA_H - 2*mm
+            logo_w = min(logo_h * (iw/ih), direita_max)
+            logo_h = logo_w * (ih/iw)
+            c.drawImage(img, W - MARGEM - logo_w, H - FAIXA_H + (FAIXA_H - logo_h)/2,
+                        width=logo_w, height=logo_h, mask='auto', preserveAspectRatio=True)
+            desenhou_logo = True
         except Exception:
             pass
 
-    if nome_loja:
-        fonte_loja = max(6, min(13, cfg['altura_mm']*0.3))
-        c.setFillColor(cor_texto_faixa)
-        c.setFont("Helvetica-Bold", fonte_loja)
-        c.drawString(text_x, H - FAIXA_H + FAIXA_H*0.36, nome_loja)
+    if nome_loja and not desenhou_logo and direita_max > 0:
+        f = fonte_titulo
+        linhas = wrap_text(c, nome_loja, "Helvetica-Bold", f, direita_max)
+        while f > 4 and (len(linhas) > 2 or any(
+                c.stringWidth(l, "Helvetica-Bold", f) > direita_max for l in linhas)):
+            f -= 0.25
+            linhas = wrap_text(c, nome_loja, "Helvetica-Bold", f, direita_max)
+        c.setFont("Helvetica-Bold", f)
+        bases = [0.62] if len(linhas) == 1 else [0.44, 0.84]
+        for l, b in zip(linhas[:2], bases):
+            c.drawRightString(W - MARGEM, H - FAIXA_H*b, l)
 
-    # Campos: os marcados como destaque viram colunas grandes; o resto
-    # vira uma linha pequena de detalhes logo abaixo do nome.
-    campos    = p.get('campos') or []
-    destaques = [x for x in campos if x.get('destaque') and (x.get('valor') or x.get('rotulo'))]
-    detalhes  = [x for x in campos if not x.get('destaque') and (x.get('valor') or x.get('rotulo'))]
+    # Corpo: linhas distribuídas por igual; a fonte acompanha a altura
+    # da etiqueta e só encolhe se alguma linha não couber na largura.
+    corpo_topo = H - FAIXA_H - 0.8*mm
+    corpo_base = 1.2*mm
+    linha_h = (corpo_topo - corpo_base) / len(LINHAS)
+    fs = linha_h * 0.46
+    maior = max(sum(largura_seg(c, s, fs) for s in l['seg']) for l in LINHAS)
+    if maior > AREA_W:
+        fs *= AREA_W / maior
 
-    nome_lines = wrap_text(c, (p.get('nome') or '').upper(), "Helvetica-Bold", fonte_nome, AREA_W)[:2]
-
-    def altura_necessaria(fn, fd, fx, fator=1.0):
-        h = 2.6*mm*fator + fn*fator*0.85
-        if len(nome_lines) > 1: h += fn*fator*1.2
-        h += fn*fator*0.55 + 1.6*mm*fator
-        if detalhes: h += fd*fator*0.8 + fd*fator*0.4 + 1.6*mm*fator
-        h += 1.4*mm*fator + 2.6*mm*fator
-        if destaques:
-            legenda = max(5, fd*0.82)*fator
-            h += legenda*0.85 + legenda*0.4 + 0.8*mm*fator + fx*fator*0.78
-        return h
-
-    # Espaçamentos e fontes são as escolhas do usuário; só encolhem
-    # (proporcionalmente, texto e espaço juntos) se não couberem na
-    # altura da etiqueta — nunca deixam o conteúdo vazar ou sobrepor.
-    disponivel = H - FAIXA_H
-    alvo = max(0, disponivel - 1.2*mm)   # margem fixa de segurança no rodapé
-    fator = 1.0
-    necessario = altura_necessaria(fonte_nome, fonte_detalhe, fonte_destaque)
-    if necessario > alvo and necessario > 0:
-        fator = max(0.4, alvo / necessario)
-
-    cursor = H - FAIXA_H - 2.6*mm*fator
-
-    c.setFillColor(colors.black)
-    c.setFont("Helvetica-Bold", fonte_nome*fator)
-    cursor -= fonte_nome*fator*0.85
-    c.drawString(MARGEM, cursor, nome_lines[0] if nome_lines else '')
-    if len(nome_lines) > 1:
-        cursor -= fonte_nome*fator*1.2
-        c.drawString(MARGEM, cursor, nome_lines[1])
-    cursor -= fonte_nome*fator*0.55 + 1.6*mm*fator
-
-    if detalhes:
-        texto_det = "   |   ".join(
-            f"{d['rotulo']}: {d['valor']}" if d.get('rotulo') and d.get('valor')
-            else (d.get('valor') or d.get('rotulo') or '')
-            for d in detalhes
-        )
-        c.setFont("Helvetica", fonte_detalhe*fator)
-        c.setFillColor(colors.HexColor('#555555'))
-        cursor -= fonte_detalhe*fator*0.8
-        c.drawString(MARGEM, cursor, texto_det)
-        cursor -= fonte_detalhe*fator*0.4 + 1.6*mm*fator
-
-    cursor -= 1.4*mm*fator
-    y_linha = cursor
-    c.setStrokeColor(colors.HexColor('#CCCCCC'))
-    c.setLineWidth(0.5)
-    c.line(MARGEM, y_linha, W-MARGEM, y_linha)
-    cursor -= 2.6*mm*fator
-
-    if destaques:
-        n = len(destaques)
-        col_w = AREA_W / n
-        fonte_legenda = max(5, fonte_detalhe*0.82)*fator
-
-        cursor -= fonte_legenda*0.85
-        y_legenda = cursor
-        c.setFont("Helvetica", fonte_legenda)
-        c.setFillColor(colors.HexColor('#777777'))
-        for i, d in enumerate(destaques):
-            x = MARGEM + i*col_w
-            c.drawString(x, y_legenda, (d.get('rotulo') or '').upper())
-
-        cursor -= fonte_legenda*0.4 + 0.8*mm*fator
-        cursor -= fonte_destaque*fator*0.78
-        y_valor = cursor
-        for i, d in enumerate(destaques):
-            x = MARGEM + i*col_w
-            max_w = col_w - (2*mm if i < n-1 else 0)
-            valor_txt = d.get('valor') or ''
-            f = fonte_destaque*fator
-            w = c.stringWidth(valor_txt, "Helvetica-Bold", f)
-            if max_w > 0 and w > max_w:
-                f = max(6, f * (max_w/w))
-            c.setFont("Helvetica-Bold", f)
-            c.setFillColor(cor_destaque)
-            c.drawString(x, y_valor, valor_txt)
+    c.setLineWidth(0.6)
+    for i, linha in enumerate(LINHAS):
+        cor = cor_destaque if linha.get('destaque') else colors.black
+        c.setFillColor(cor)
+        c.setStrokeColor(cor)
+        y = corpo_topo - linha_h*(i + 0.5) - fs*0.35
+        x = MARGEM
+        for s in linha['seg']:
+            tipo = s[0]
+            if tipo in ('b', 't'):
+                c.setFont("Helvetica-Bold" if tipo == 'b' else "Helvetica", fs)
+                c.drawString(x, y, s[1])
+            elif tipo == 'ln':
+                c.line(x, y - 0.6, x + s[1]*fs, y - 0.6)
+            elif tipo == 'fill':
+                c.line(x, y - 0.6, W - MARGEM, y - 0.6)
+                break
+            elif tipo == 'box':
+                lado = CAIXA_EM * fs
+                c.rect(x, y - 0.5, lado, lado, fill=0, stroke=1)
+            x += largura_seg(c, s, fs)
 
     c.showPage()
 
-def gerar_pdf_arquivo(produtos, cfg=None):
+def gerar_pdf_arquivo(qtde, cfg=None):
     cfg = {**DEFAULT_CONFIG, **(cfg or {})}
     W = cfg['largura_mm'] * mm
     H = cfg['altura_mm'] * mm
     nome_arquivo = f"etiquetas_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.pdf"
     caminho = os.path.join(PDFS_DIR, nome_arquivo)
     c = canvas.Canvas(caminho, pagesize=(W, H))
-    total = 0
-    for p in produtos:
-        for _ in range(int(p.get('qtde', 1))):
-            desenhar_etiqueta(c, p, cfg)
-            total += 1
+    for _ in range(qtde):
+        desenhar_etiqueta(c, cfg)
     c.save()
-    return caminho, total, nome_arquivo
+    return caminho, nome_arquivo
 
 # ── Histórico ────────────────────────────────────────────────────
 def salvar_historico(entrada):
@@ -232,18 +200,18 @@ def config_default():
 def gerar():
     try:
         data = request.json or {}
-        produtos = data.get('produtos', [])
         cfg = {**DEFAULT_CONFIG, **(data.get('config') or {})}
-        if not produtos: return jsonify({'erro': 'Nenhum produto'}), 400
-        caminho, total, nome_arquivo = gerar_pdf_arquivo(produtos, cfg)
+        try: qtde = int(data.get('qtde', 1))
+        except (TypeError, ValueError): qtde = 0
+        if qtde < 1: return jsonify({'erro': 'Informe a quantidade de etiquetas'}), 400
+        if qtde > 1000: return jsonify({'erro': 'Máximo de 1000 etiquetas por vez'}), 400
+        caminho, nome_arquivo = gerar_pdf_arquivo(qtde, cfg)
         salvar_historico({
             'id': nome_arquivo,
             'data': datetime.datetime.now().strftime('%d/%m/%Y %H:%M'),
-            'produtos': len(produtos),
-            'etiquetas': total,
+            'etiquetas': qtde,
             'arquivo': caminho,
             'nome_arquivo': nome_arquivo,
-            'lista': produtos
         })
         return send_file(caminho, as_attachment=True, download_name='etiquetas.pdf', mimetype='application/pdf')
     except Exception as e:
@@ -266,102 +234,3 @@ def deletar_historico(id):
     historico = [h for h in historico if h.get('id') != id]
     json.dump(historico, open(HIST_FILE, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
     return jsonify({'ok': True})
-
-@app.route('/importar_texto', methods=['POST'])
-def importar_texto():
-    try:
-        texto = request.json.get('texto', '')
-        produtos = []
-        for linha in texto.strip().split('\n'):
-            linha = linha.strip()
-            if not linha or ':' not in linha: continue
-            m = re.match(r'^(.+?):\s*[\d,\.]+\s*/\s*([\d,\.]+)\s*\((\d+)\)', linha)
-            if m:
-                preco = f"{float(m.group(2).replace(',','.')):.2f}".replace('.', ',')
-                produtos.append({'nome': m.group(1).strip(), 'cor': '', 'tam': '', 'preco': preco, 'qtde': int(m.group(3))})
-        return jsonify({'produtos': produtos})
-    except Exception as e:
-        return jsonify({'erro': str(e)}), 500
-
-@app.route('/importar_xlsx', methods=['POST'])
-def importar_xlsx():
-    try:
-        import openpyxl
-        f = request.files['arquivo']
-        tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
-        f.save(tmp.name)
-        wb = openpyxl.load_workbook(tmp.name, data_only=True)
-        ws = wb["Etiquetas"]
-        produtos = []
-        for row in ws.iter_rows(min_row=5, values_only=True):
-            nome, cor, tam, preco, qtde = row[0], row[1], row[2], row[3], row[4]
-            if not nome or not preco: continue
-            try:
-                produtos.append({
-                    'nome': str(nome).strip(),
-                    'cor':  str(cor).strip() if cor else '',
-                    'tam':  str(tam).strip() if tam else '',
-                    'preco': f"{float(preco):.2f}".replace('.', ','),
-                    'qtde': int(qtde) if qtde else 1
-                })
-            except: pass
-        os.unlink(tmp.name)
-        return jsonify({'produtos': produtos})
-    except Exception as e:
-        return jsonify({'erro': str(e)}), 500
-
-@app.route('/ler_nf', methods=['POST'])
-def ler_nf():
-    try:
-        f = request.files.get('arquivo')
-        if not f:
-            return jsonify({'erro': 'Nenhum arquivo enviado'}), 400
-
-        # 1. Extração Gratuita de Texto
-        reader = pypdf.PdfReader(f)
-        texto_completo = ""
-        for page in reader.pages:
-            texto_completo += page.extract_text() + "\n"
-
-        # 2. Lógica de Parse (Extraída do seu código 'gerar_etiquetas.py')
-        resultado = []
-        for linha in texto_completo.split('\n'):
-            linha = linha.strip()
-            # Filtra apenas linhas que começam com o código de 5 dígitos (padrão da sua NF)
-            if re.match(r'^\d{5}', linha):
-                # Preço sugerido
-                vals = re.findall(r'\d+,\d{2}', linha)
-                preco_sug = vals[-1] if vals else '0,00'
-
-                # Tamanho (G, M, P, GG)
-                tam_m = re.search(r'\b(GG|G|M|P)\b\s+\d+\s+\d+,\d{2}', linha)
-                tam = tam_m.group(1) if tam_m else ''
-
-                # Cor (Busca na sua lista de CORES definida no topo)
-                cor = ''
-                for c in CORES:
-                    if c in linha.upper():
-                        cor = c
-                        break
-
-                # Quantidade
-                qtde_m = re.search(r'\b(?:GG|G|M|P)\b\s+(\d+)\s+\d+,\d{2}', linha)
-                qtde = int(qtde_m.group(1)) if qtde_m else 1
-
-                # Nome do Produto (Extrai entre o código e a cor/tamanho)
-                m = re.match(r'^\d{5}\s+\S+\s+\S+\s+\S+[-\s]+(.+)', linha)
-                nome = m.group(1).split(tam)[0].strip() if m else "Produto"
-
-                resultado.append({
-                    'nome': nome.upper(),
-                    'cor': cor,
-                    'tam': tam,
-                    'preco': preco_sug,
-                    'qtde': qtde
-                })
-
-        # 3. Retorno IDÊNTICO ao que o seu Front-end já espera
-        return jsonify({'produtos': resultado, 'total': len(resultado)})
-
-    except Exception as e:
-        return jsonify({'erro': f"Erro no processamento local: {str(e)}"}), 500
