@@ -20,7 +20,6 @@
     { seg: [['b', 'Fabricação/Abertura:'], ['sp', 0.4], ...DATA, ['sp', 1],
             ['b', 'Hora:'], ['sp', 0.4], ['ln', 1.8], ['t', ':'], ['ln', 1.8]] },
     { seg: [['b', 'VALIDADE:'], ['sp', 0.4], ...DATA], destaque: true },
-    { seg: [['b', 'Responsável:'], ['sp', 0.4], ['fill']] },
     { seg: [['b', 'Conservação:'], ['sp', 0.5], ['box'], ['t', 'Refrigerado'], ['sp', 0.7],
             ['box'], ['t', 'Congelado'], ['sp', 0.7], ['box'], ['t', 'Ambiente']] },
   ];

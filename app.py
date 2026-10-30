@@ -37,7 +37,6 @@ LINHAS = [
     {'seg': [('b', 'Fabricação/Abertura:'), ('sp', .4), *DATA, ('sp', 1),
              ('b', 'Hora:'), ('sp', .4), ('ln', 1.8), ('t', ':'), ('ln', 1.8)]},
     {'seg': [('b', 'VALIDADE:'), ('sp', .4), *DATA], 'destaque': True},
-    {'seg': [('b', 'Responsável:'), ('sp', .4), ('fill',)]},
     {'seg': [('b', 'Conservação:'), ('sp', .5), ('box',), ('t', 'Refrigerado'), ('sp', .7),
              ('box',), ('t', 'Congelado'), ('sp', .7), ('box',), ('t', 'Ambiente')]},
 ]
