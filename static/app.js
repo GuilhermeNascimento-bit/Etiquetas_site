@@ -15,19 +15,23 @@
 
   // Mesma estrutura de app.py:LINHAS — mantenha as duas iguais.
   const DATA = [['ln', 2], ['t', '/'], ['ln', 2], ['t', '/'], ['ln', 3.2]];
+  const HORA = [['ln', 1.8], ['t', ':'], ['ln', 1.8]];
   const LINHAS = [
-    { seg: [['b', 'Produto:'], ['sp', 0.4], ['fill']] },
-    { seg: [['b', 'Fabricação/Abertura:'], ['sp', 0.4], ...DATA, ['sp', 1],
-            ['b', 'Hora:'], ['sp', 0.4], ['ln', 1.8], ['t', ':'], ['ln', 1.8]] },
-    { seg: [['b', 'VALIDADE:'], ['sp', 0.4], ...DATA], destaque: true },
-    { seg: [['b', 'Conservação:'], ['sp', 0.5], ['box'], ['t', 'Refrigerado'], ['sp', 0.7],
-            ['box'], ['t', 'Congelado'], ['sp', 0.7], ['box'], ['t', 'Ambiente']] },
+    { seg: [['b', 'Produto:'], ['sp', 0.4], ['campo', 'produto', null]] },
+    { seg: [['b', 'Fabricação/Abertura:'], ['sp', 0.4], ['campo', 'fabricacao', DATA], ['sp', 1],
+            ['b', 'Hora:'], ['sp', 0.4], ['campo', 'hora', HORA]] },
+    { seg: [['b', 'VALIDADE:'], ['sp', 0.4], ['campo', 'validade', DATA]], destaque: true },
+    { seg: [['b', 'Conservação:'], ['sp', 0.5],
+            ['box', 'Refrigerado'], ['t', 'Refrigerado'], ['sp', 0.7],
+            ['box', 'Congelado'], ['t', 'Congelado'], ['sp', 0.7],
+            ['box', 'Ambiente'], ['t', 'Ambiente']] },
   ];
   const CAIXA_EM = 0.75, CAIXA_GAP_EM = 0.3, FILL_MIN_EM = 3;
 
   const state = {
     config: { ...HARD_DEFAULT_CONFIG },
     logoImgEl: null,
+    dados: { produto: '', fabricacao: '', hora: '', validade: '', conservacao: '' },
   };
 
   const el = (id) => document.getElementById(id);
@@ -85,6 +89,24 @@
       state.logoImgEl = null;
       el('logo-input').value = '';
       preencherCamposConfig();
+      renderPreview();
+    });
+  }
+
+  // ── Preenchimento ───────────────────────────────────────────────
+  // <input type="date"> dá AAAA-MM-DD; a etiqueta usa DD/MM/AAAA.
+  const dataBR = (v) => (v ? v.split('-').reverse().join('/') : '');
+
+  function bindDadosInputs() {
+    el('d-produto').addEventListener('input', (e) => { state.dados.produto = e.target.value; renderPreview(); });
+    el('d-fabricacao').addEventListener('input', (e) => { state.dados.fabricacao = dataBR(e.target.value); renderPreview(); });
+    el('d-hora').addEventListener('input', (e) => { state.dados.hora = e.target.value; renderPreview(); });
+    el('d-validade').addEventListener('input', (e) => { state.dados.validade = dataBR(e.target.value); renderPreview(); });
+    el('d-conservacao').addEventListener('change', (e) => { state.dados.conservacao = e.target.value; renderPreview(); });
+    el('limpar-dados').addEventListener('click', () => {
+      ['d-produto', 'd-fabricacao', 'd-hora', 'd-validade'].forEach((id) => { el(id).value = ''; });
+      document.querySelector('input[name="conservacao"][value=""]').checked = true;
+      state.dados = { produto: '', fabricacao: '', hora: '', validade: '', conservacao: '' };
       renderPreview();
     });
   }
@@ -182,8 +204,51 @@
         case 't': ctx.font = fontR(fs); return ctx.measureText(s[1]).width;
         case 'ln': case 'sp': return s[1] * fs;
         case 'box': return (CAIXA_EM + CAIXA_GAP_EM) * fs;
-        case 'fill': return FILL_MIN_EM * fs;
+        case 'campo': return s[2] ? s[2].reduce((acc, sub) => acc + larguraSeg(sub), 0) : FILL_MIN_EM * fs;
         default: return 0;
+      }
+    };
+
+    const dados = state.dados;
+    const xFim = W - MARGEM;
+    const linhaEmBranco = (x1, x2, y) => {
+      ctx.beginPath(); ctx.moveTo(x1, y + 0.6 * pt); ctx.lineTo(x2, y + 0.6 * pt); ctx.stroke();
+    };
+    const desenharSeg = (s, x, y) => {
+      if (s[0] === 'b' || s[0] === 't') {
+        ctx.font = s[0] === 'b' ? fontB(fs) : fontR(fs);
+        ctx.fillText(s[1], x, y);
+      } else if (s[0] === 'ln') {
+        linhaEmBranco(x, x + s[1] * fs, y);
+      } else if (s[0] === 'box') {
+        const lado = CAIXA_EM * fs;
+        const topo = y + 0.5 * pt - lado;
+        ctx.strokeRect(x, topo, lado, lado);
+        if (dados.conservacao === s[1]) {
+          const p = lado * 0.2;
+          ctx.beginPath();
+          ctx.moveTo(x + p, topo + p); ctx.lineTo(x + lado - p, topo + lado - p);
+          ctx.moveTo(x + p, topo + lado - p); ctx.lineTo(x + lado - p, topo + p);
+          ctx.stroke();
+        }
+      } else if (s[0] === 'campo') {
+        const largura = s[2] ? larguraSeg(s) : xFim - x;
+        const valor = String(dados[s[1]] || '').trim();
+        if (!valor) {
+          if (!s[2]) { linhaEmBranco(x, xFim, y); return; }
+          let xs = x;
+          for (const sub of s[2]) { desenharSeg(sub, xs, y); xs += larguraSeg(sub); }
+          return;
+        }
+        // Valor digitado sobre a linha; encolhe a fonte se não couber.
+        let f = fs;
+        const maxW = largura - 0.3 * fs;
+        ctx.font = fontR(f);
+        const w = ctx.measureText(valor).width;
+        if (w > maxW && maxW > 0) f = Math.max(fs * 0.5, f * maxW / w);
+        ctx.font = fontR(f);
+        ctx.fillText(valor, x + 0.15 * fs, y);
+        linhaEmBranco(x, x + largura, y);
       }
     };
     const maior = Math.max(...LINHAS.map((l) => l.seg.reduce((acc, s) => acc + larguraSeg(s), 0)));
@@ -197,20 +262,8 @@
       const y = corpoTopo + linhaH * (i + 0.5) + fs * 0.35;
       let x = MARGEM;
       for (const s of linha.seg) {
-        const w = larguraSeg(s);
-        if (s[0] === 'b' || s[0] === 't') {
-          ctx.font = s[0] === 'b' ? fontB(fs) : fontR(fs);
-          ctx.fillText(s[1], x, y);
-        } else if (s[0] === 'ln') {
-          ctx.beginPath(); ctx.moveTo(x, y + 0.6 * pt); ctx.lineTo(x + w, y + 0.6 * pt); ctx.stroke();
-        } else if (s[0] === 'fill') {
-          ctx.beginPath(); ctx.moveTo(x, y + 0.6 * pt); ctx.lineTo(W - MARGEM, y + 0.6 * pt); ctx.stroke();
-          break;
-        } else if (s[0] === 'box') {
-          const lado = CAIXA_EM * fs;
-          ctx.strokeRect(x, y + 0.5 * pt - lado, lado, lado);
-        }
-        x += w;
+        desenharSeg(s, x, y);
+        x += larguraSeg(s);
       }
     });
   }
@@ -233,7 +286,7 @@
       const resp = await fetch('/gerar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: state.config, qtde }),
+        body: JSON.stringify({ config: state.config, qtde, dados: state.dados }),
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
@@ -273,11 +326,13 @@
         item.className = 'historico-item';
         item.innerHTML = `
           <div class="linha1"><span>${h.data || ''}</span></div>
-          <div class="resumo">${h.etiquetas || 0} etiqueta(s)</div>
+          <div class="resumo"></div>
           <div class="acoes">
             <a href="/historico/download/${encodeURIComponent(h.nome_arquivo || h.id)}">baixar</a>
             <button type="button" class="excluir">excluir</button>
           </div>`;
+        item.querySelector('.resumo').textContent =
+          `${h.etiquetas || 0} etiqueta(s)` + (h.produto ? ` · ${h.produto}` : '');
         item.querySelector('.excluir').addEventListener('click', async () => {
           await fetch(`/historico/${encodeURIComponent(h.id)}`, { method: 'DELETE' });
           carregarHistorico();
@@ -299,6 +354,7 @@
       state.config = { ...HARD_DEFAULT_CONFIG };
     }
     bindConfigInputs();
+    bindDadosInputs();
     preencherCamposConfig();
     renderPreview();
     carregarHistorico();

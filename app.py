@@ -24,21 +24,26 @@ HIST_FILE = os.path.join(BASE_DIR, "historico.json")
 PDFS_DIR  = os.path.join(BASE_DIR, "pdfs_gerados")
 os.makedirs(PDFS_DIR, exist_ok=True)
 
-# Estrutura fixa da etiqueta "Identificação do Alimento" (sai em branco,
-# para preencher à mão). Cada linha é uma sequência de segmentos:
+# Estrutura fixa da etiqueta "Identificação do Alimento". Cada linha é uma
+# sequência de segmentos:
 #   ('b', txt) rótulo em negrito   ('t', txt) texto normal
-#   ('ln', em) linha em branco     ('fill',)  linha até o fim
-#   ('sp', em) espaço              ('box',)   caixinha de marcar
+#   ('ln', em) linha em branco     ('sp', em) espaço
+#   ('campo', chave, vazio)  valor digitado pelo usuário (dados[chave]); se
+#       vier vazio, desenha os segmentos de `vazio` (ou linha até o fim, se None)
+#   ('box', opcao)  caixinha de marcar; sai marcada se dados['conservacao'] == opcao
 # Larguras em "em" (múltiplos do tamanho da fonte). Esta mesma tabela
 # existe em static/app.js para a pré-visualização — mantenha as duas iguais.
 DATA = [('ln', 2), ('t', '/'), ('ln', 2), ('t', '/'), ('ln', 3.2)]
+HORA = [('ln', 1.8), ('t', ':'), ('ln', 1.8)]
 LINHAS = [
-    {'seg': [('b', 'Produto:'), ('sp', .4), ('fill',)]},
-    {'seg': [('b', 'Fabricação/Abertura:'), ('sp', .4), *DATA, ('sp', 1),
-             ('b', 'Hora:'), ('sp', .4), ('ln', 1.8), ('t', ':'), ('ln', 1.8)]},
-    {'seg': [('b', 'VALIDADE:'), ('sp', .4), *DATA], 'destaque': True},
-    {'seg': [('b', 'Conservação:'), ('sp', .5), ('box',), ('t', 'Refrigerado'), ('sp', .7),
-             ('box',), ('t', 'Congelado'), ('sp', .7), ('box',), ('t', 'Ambiente')]},
+    {'seg': [('b', 'Produto:'), ('sp', .4), ('campo', 'produto', None)]},
+    {'seg': [('b', 'Fabricação/Abertura:'), ('sp', .4), ('campo', 'fabricacao', DATA), ('sp', 1),
+             ('b', 'Hora:'), ('sp', .4), ('campo', 'hora', HORA)]},
+    {'seg': [('b', 'VALIDADE:'), ('sp', .4), ('campo', 'validade', DATA)], 'destaque': True},
+    {'seg': [('b', 'Conservação:'), ('sp', .5),
+             ('box', 'Refrigerado'), ('t', 'Refrigerado'), ('sp', .7),
+             ('box', 'Congelado'), ('t', 'Congelado'), ('sp', .7),
+             ('box', 'Ambiente'), ('t', 'Ambiente')]},
 ]
 CAIXA_EM, CAIXA_GAP_EM, FILL_MIN_EM = .75, .3, 3
 
@@ -62,12 +67,50 @@ def largura_seg(c, s, fs):
     if tipo == 't':    return c.stringWidth(s[1], "Helvetica", fs)
     if tipo in ('ln', 'sp'): return s[1] * fs
     if tipo == 'box':  return (CAIXA_EM + CAIXA_GAP_EM) * fs
-    if tipo == 'fill': return FILL_MIN_EM * fs
+    if tipo == 'campo':
+        if s[2] is None: return FILL_MIN_EM * fs
+        return sum(largura_seg(c, sub, fs) for sub in s[2])
     return 0
 
-def desenhar_etiqueta(c, cfg):
-    """Etiqueta de identificação do alimento, em branco (campos com linhas
-    e caixinhas para preencher à mão), no tamanho da bobina."""
+def desenhar_seg(c, s, x, y, fs, dados, x_fim):
+    """Desenha um segmento com a linha de base em y; x_fim é onde
+    termina a área útil (usado pelo campo que vai até o fim da linha)."""
+    tipo = s[0]
+    if tipo in ('b', 't'):
+        c.setFont("Helvetica-Bold" if tipo == 'b' else "Helvetica", fs)
+        c.drawString(x, y, s[1])
+    elif tipo == 'ln':
+        c.line(x, y - 0.6, x + s[1]*fs, y - 0.6)
+    elif tipo == 'box':
+        lado = CAIXA_EM * fs
+        c.rect(x, y - 0.5, lado, lado, fill=0, stroke=1)
+        if dados.get('conservacao') == s[1]:
+            p = lado * 0.2
+            c.line(x + p, y - 0.5 + p, x + lado - p, y - 0.5 + lado - p)
+            c.line(x + p, y - 0.5 + lado - p, x + lado - p, y - 0.5 + p)
+    elif tipo == 'campo':
+        largura = (x_fim - x) if s[2] is None else largura_seg(c, s, fs)
+        valor = str(dados.get(s[1]) or '').strip()
+        if not valor:
+            if s[2] is None:
+                c.line(x, y - 0.6, x_fim, y - 0.6)
+            for sub in s[2] or []:
+                desenhar_seg(c, sub, x, y, fs, dados, x_fim)
+                x += largura_seg(c, sub, fs)
+            return
+        # Valor digitado sobre a linha; encolhe a fonte se não couber.
+        f, max_w = fs, largura - 0.3*fs
+        w = c.stringWidth(valor, "Helvetica", f)
+        if w > max_w > 0:
+            f = max(fs * 0.5, f * max_w / w)
+        c.setFont("Helvetica", f)
+        c.drawString(x + 0.15*fs, y, valor)
+        c.line(x, y - 0.6, x + largura, y - 0.6)
+
+def desenhar_etiqueta(c, cfg, dados):
+    """Etiqueta de identificação do alimento no tamanho da bobina. Campos
+    preenchidos em `dados` saem impressos; os vazios ficam com linha em
+    branco para preencher à mão."""
     W = cfg['largura_mm'] * mm
     H = cfg['altura_mm'] * mm
     MARGEM  = 2 * mm
@@ -139,24 +182,13 @@ def desenhar_etiqueta(c, cfg):
         c.setStrokeColor(cor)
         y = corpo_topo - linha_h*(i + 0.5) - fs*0.35
         x = MARGEM
-        for s in linha['seg']:
-            tipo = s[0]
-            if tipo in ('b', 't'):
-                c.setFont("Helvetica-Bold" if tipo == 'b' else "Helvetica", fs)
-                c.drawString(x, y, s[1])
-            elif tipo == 'ln':
-                c.line(x, y - 0.6, x + s[1]*fs, y - 0.6)
-            elif tipo == 'fill':
-                c.line(x, y - 0.6, W - MARGEM, y - 0.6)
-                break
-            elif tipo == 'box':
-                lado = CAIXA_EM * fs
-                c.rect(x, y - 0.5, lado, lado, fill=0, stroke=1)
-            x += largura_seg(c, s, fs)
+        for seg in linha['seg']:
+            desenhar_seg(c, seg, x, y, fs, dados, W - MARGEM)
+            x += largura_seg(c, seg, fs)
 
     c.showPage()
 
-def gerar_pdf_arquivo(qtde, cfg=None):
+def gerar_pdf_arquivo(qtde, cfg=None, dados=None):
     cfg = {**DEFAULT_CONFIG, **(cfg or {})}
     W = cfg['largura_mm'] * mm
     H = cfg['altura_mm'] * mm
@@ -164,7 +196,7 @@ def gerar_pdf_arquivo(qtde, cfg=None):
     caminho = os.path.join(PDFS_DIR, nome_arquivo)
     c = canvas.Canvas(caminho, pagesize=(W, H))
     for _ in range(qtde):
-        desenhar_etiqueta(c, cfg)
+        desenhar_etiqueta(c, cfg, dados or {})
     c.save()
     return caminho, nome_arquivo
 
@@ -204,11 +236,13 @@ def gerar():
         except (TypeError, ValueError): qtde = 0
         if qtde < 1: return jsonify({'erro': 'Informe a quantidade de etiquetas'}), 400
         if qtde > 1000: return jsonify({'erro': 'Máximo de 1000 etiquetas por vez'}), 400
-        caminho, nome_arquivo = gerar_pdf_arquivo(qtde, cfg)
+        dados = data.get('dados') or {}
+        caminho, nome_arquivo = gerar_pdf_arquivo(qtde, cfg, dados)
         salvar_historico({
             'id': nome_arquivo,
             'data': datetime.datetime.now().strftime('%d/%m/%Y %H:%M'),
             'etiquetas': qtde,
+            'produto': dados.get('produto') or '',
             'arquivo': caminho,
             'nome_arquivo': nome_arquivo,
         })

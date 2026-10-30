@@ -99,6 +99,8 @@ body {
 
 .campo input[type="text"],
 .campo input[type="number"],
+.campo input[type="date"],
+.campo input[type="time"],
 .campo textarea,
 .campo input[type="file"] {
   padding: 9px 11px;
@@ -280,3 +282,10 @@ body {
 .gerar-row .campo { margin-bottom: 0; width: 170px; flex-shrink: 0; }
 .gerar-row .btn-primario { margin-top: 0; }
 .logo-preview-wrap[hidden] { display: none; }
+
+.preenchimento { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.preenchimento h3 { font-size: 11.5px; margin: 0 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.preenchimento h3 small { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.opcoes { display: flex; flex-wrap: wrap; gap: 8px 18px; padding-top: 4px; color: var(--text); }
+.opcoes label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.opcoes input { accent-color: var(--accent); }

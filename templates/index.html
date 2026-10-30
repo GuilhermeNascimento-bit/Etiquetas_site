@@ -14,7 +14,7 @@
     <span class="brand-mark">🏷️</span>
     <div>
       <h1>Gerador de Etiquetas</h1>
-      <p>Etiqueta de identificação do alimento em branco, pronta pra preencher à mão</p>
+      <p>Etiqueta de identificação do alimento: preencha aqui ou deixe em branco pra escrever à mão</p>
     </div>
   </div>
 </header>
@@ -81,6 +81,38 @@
     <h2>Pré-visualização</h2>
     <div class="preview-wrap">
       <canvas id="preview-canvas"></canvas>
+    </div>
+
+    <div class="preenchimento">
+      <h3>Preenchimento <small>(o que ficar vazio sai em branco)</small></h3>
+      <label class="campo">
+        <span>Produto</span>
+        <input type="text" id="d-produto" maxlength="50" placeholder="Ex: Molho de tomate">
+      </label>
+      <div class="campo-grid3">
+        <label class="campo">
+          <span>Fabricação/Abertura</span>
+          <input type="date" id="d-fabricacao">
+        </label>
+        <label class="campo">
+          <span>Hora</span>
+          <input type="time" id="d-hora">
+        </label>
+        <label class="campo">
+          <span>Validade</span>
+          <input type="date" id="d-validade">
+        </label>
+      </div>
+      <div class="campo">
+        <span>Conservação</span>
+        <div class="opcoes" id="d-conservacao">
+          <label><input type="radio" name="conservacao" value="Refrigerado"> Refrigerado</label>
+          <label><input type="radio" name="conservacao" value="Congelado"> Congelado</label>
+          <label><input type="radio" name="conservacao" value="Ambiente"> Ambiente</label>
+          <label><input type="radio" name="conservacao" value="" checked> Nenhuma</label>
+        </div>
+      </div>
+      <button type="button" id="limpar-dados" class="btn-link">limpar preenchimento</button>
     </div>
 
     <div class="gerar-row">
